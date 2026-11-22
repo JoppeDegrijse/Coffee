@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leerkrachtendashboard – verbindingstest</title>
+<title>Coffee! – verbindingstest</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
@@ -61,7 +61,7 @@
 </head>
 <body>
 <header>
-  <h1>Leerkrachtendashboard – verbindingstest</h1>
+  <h1>☕ Coffee! – verbindingstest</h1>
   <p>Deze pagina test of de app met je schoolaccount aan je weekagenda's in Google Drive kan. Ze leest alleen en wijzigt niets.</p>
 </header>
 
@@ -84,17 +84,31 @@
     <div id="aanmeldMelding"></div>
   </section>
 
-  <!-- Stap 3: weekdocumenten -->
+  <!-- Stap 3: agendamap -->
   <section class="kaart verborgen" id="stap3">
-    <h2><span class="nr" id="nr3">3</span> Je weekdocumenten</h2>
-    <p class="klein">De 25 meest recent gewijzigde Google Docs waarvan de naam met "Week" begint, ook op gedeelde drives.</p>
+    <h2><span class="nr" id="nr3">3</span> Je agendamap</h2>
+    <p class="klein">Het pad naar je eigen agendamap, met de gedeelde drive als eerste deel. Scheid de delen met een <code>/</code>.</p>
+    <input type="text" id="mapPad" autocomplete="off">
+    <button id="zoekMap">Zoek deze map</button>
+    <button id="bladerMap" class="secundair">Zelf bladeren</button>
+    <div id="mapMelding"></div>
+    <div id="bladeren" class="verborgen">
+      <div class="klein" id="kruimelpad"></div>
+      <ul class="docs" id="mappenLijst"></ul>
+    </div>
+  </section>
+
+  <!-- Stap 4: weekdocumenten -->
+  <section class="kaart verborgen" id="stap4">
+    <h2><span class="nr" id="nr4">4</span> Je weekdocumenten</h2>
+    <p class="klein">Alle Google Docs in je agendamap en de maandmappen eronder, meest recent gewijzigd eerst.</p>
     <div id="docsMelding"></div>
     <ul class="docs" id="docsLijst"></ul>
   </section>
 
-  <!-- Stap 4: uitgelezen week -->
-  <section class="kaart verborgen" id="stap4">
-    <h2><span class="nr" id="nr4">4</span> Zo leest de app je week</h2>
+  <!-- Stap 5: uitgelezen week -->
+  <section class="kaart verborgen" id="stap5">
+    <h2><span class="nr" id="nr5">5</span> Zo leest Coffee! je week</h2>
     <p class="klein">Lesuren, vakken en lesonderwerpen uit de tabellen. Gele rijen = permanentie, groene labels = therapie, rode labels = herinneringen.</p>
     <div id="weekMelding"></div>
     <div id="weekInhoud"></div>
@@ -110,6 +124,10 @@ const SCOPES = [
   "https://www.googleapis.com/auth/documents"
 ].join(" ");
 const OPSLAG_SLEUTEL = "lkd_client_id";
+const MAP_SLEUTEL = "coffee_agendamap";          // { id, pad }
+const STANDAARD_PAD = "Klimop / SCHOOLJAAR 26 - 27 / AGENDA / JOPPE";
+const MAP_TYPE = "application/vnd.google-apps.folder";
+const DOC_TYPE = "application/vnd.google-apps.document";
 
 let tokenClient = null;
 let accessToken = null;
@@ -213,7 +231,7 @@ async function onToken(resp) {
     stapOk(2);
     $("aanmelden").classList.add("verborgen");
     $("afmelden").classList.remove("verborgen");
-    zoekWeekdocumenten();
+    startMapKeuze();
   } catch (e) {
     melding("aanmeldMelding", "fout", vertaalApiFout(e));
   }
@@ -238,42 +256,162 @@ function initAanmelden() {
   }, 200);
 }
 
-// ---------- Stap 3: weekdocumenten zoeken ----------
-async function zoekWeekdocumenten() {
-  $("stap3").classList.remove("verborgen");
-  melding("docsMelding", "info", "Bezig met zoeken…");
-  const q = "name contains 'Week' and mimeType = 'application/vnd.google-apps.document' and trashed = false";
-  const params = new URLSearchParams({
-    q, pageSize: "50", orderBy: "modifiedTime desc",
-    fields: "files(id,name,modifiedTime,parents,driveId)",
-    supportsAllDrives: "true", includeItemsFromAllDrives: "true", corpora: "allDrives"
-  });
-  try {
+// ---------- Stap 3: agendamap kiezen ----------
+const gelijk = (a, b) => a.replace(/\s+/g, " ").trim().toLowerCase() === b.replace(/\s+/g, " ").trim().toLowerCase();
+
+async function lijstAlles(q, velden) {
+  const alles = [];
+  let pageToken = "";
+  do {
+    const params = new URLSearchParams({
+      q, pageSize: "200", fields: "nextPageToken,files(" + velden + ")",
+      supportsAllDrives: "true", includeItemsFromAllDrives: "true", corpora: "allDrives"
+    });
+    if (pageToken) params.set("pageToken", pageToken);
     const res = await api("https://www.googleapis.com/drive/v3/files?" + params);
-    const files = (res.files || []).filter(f => /^week\b/i.test(f.name.trim())).slice(0, 25);
-    const lijst = $("docsLijst");
-    lijst.replaceChildren();
-    if (!files.length) {
-      melding("docsMelding", "fout", "Geen documenten gevonden waarvan de naam met \"Week\" begint. De verbinding werkt wel; laat me weten hoe je bestanden heten.");
+    alles.push(...(res.files || []));
+    pageToken = res.nextPageToken || "";
+  } while (pageToken);
+  return alles;
+}
+
+async function gedeeldeDrives() {
+  const res = await api("https://www.googleapis.com/drive/v3/drives?pageSize=100&fields=drives(id,name)");
+  return res.drives || [];
+}
+
+async function submappen(id) {
+  const mappen = await lijstAlles("'" + id + "' in parents and mimeType = '" + MAP_TYPE + "' and trashed = false", "id,name");
+  return mappen.sort((a, b) => a.name.localeCompare(b.name, "nl"));
+}
+
+function bewaarMap(id, pad) {
+  localStorage.setItem(MAP_SLEUTEL, JSON.stringify({ id, pad }));
+  melding("mapMelding", "ok", "Agendamap gekozen: " + pad);
+  $("bladeren").classList.add("verborgen");
+  stapOk(3);
+  zoekWeekdocumenten(id);
+}
+
+function startMapKeuze() {
+  $("stap3").classList.remove("verborgen");
+  let bewaard = null;
+  try { bewaard = JSON.parse(localStorage.getItem(MAP_SLEUTEL) || "null"); } catch (e) { /* leeg */ }
+  $("mapPad").value = bewaard ? bewaard.pad : STANDAARD_PAD;
+  $("zoekMap").onclick = () => zoekPad($("mapPad").value);
+  $("bladerMap").onclick = () => toonBladeren(null, []);
+  if (bewaard) bewaarMap(bewaard.id, bewaard.pad);
+  else zoekPad(STANDAARD_PAD);
+}
+
+async function zoekPad(pad) {
+  const delen = pad.split("/").map(d => d.trim()).filter(Boolean);
+  if (!delen.length) return;
+  melding("mapMelding", "info", "Bezig met zoeken naar " + delen.join(" / ") + "…");
+  try {
+    let huidig;
+    const drives = await gedeeldeDrives();
+    const drive = drives.find(d => gelijk(d.name, delen[0]));
+    if (drive) huidig = drive.id;
+    else if (gelijk(delen[0], "Mijn Drive") || gelijk(delen[0], "My Drive")) huidig = "root";
+    else {
+      melding("mapMelding", "fout", "Ik vind geen gedeelde drive met de naam \"" + delen[0] + "\". Gevonden gedeelde drives: " +
+        (drives.map(d => d.name).join(", ") || "geen") + ". Je kunt ook zelf bladeren.");
       return;
     }
-    melding("docsMelding", "ok", files.length + " weekdocument(en) gevonden. Klik op \"Uitlezen\" bij een week.");
-    stapOk(3);
-    // Mapnamen ophalen (best effort)
-    const mappen = {};
-    await Promise.all([...new Set(files.flatMap(f => f.parents || []))].map(async (pid) => {
-      try {
-        const m = await api("https://www.googleapis.com/drive/v3/files/" + pid + "?fields=name&supportsAllDrives=true");
-        mappen[pid] = m.name;
-      } catch (e) { /* geen toegang tot map: geen probleem */ }
+    for (const deel of delen.slice(1)) {
+      const kandidaten = await submappen(huidig);
+      const volgende = kandidaten.find(m => gelijk(m.name, deel));
+      if (!volgende) {
+        melding("mapMelding", "fout", "Map \"" + deel + "\" niet gevonden. Wel aanwezig: " +
+          (kandidaten.map(m => m.name).join(", ") || "geen mappen") + ". Pas het pad aan of blader zelf.");
+        return;
+      }
+      huidig = volgende.id;
+    }
+    bewaarMap(huidig, delen.join(" / "));
+  } catch (e) {
+    melding("mapMelding", "fout", vertaalApiFout(e));
+  }
+}
+
+async function toonBladeren(map, pad) {
+  // map = null → overzicht van de drives; anders { id, name }
+  $("bladeren").classList.remove("verborgen");
+  const lijst = $("mappenLijst");
+  lijst.replaceChildren(maak("li", "klein", "Laden…"));
+  const kruimel = $("kruimelpad");
+  kruimel.replaceChildren();
+  const top = maak("a", "", "Drives");
+  top.href = "#"; top.onclick = (ev) => { ev.preventDefault(); toonBladeren(null, []); };
+  kruimel.appendChild(top);
+  pad.forEach((p, i) => {
+    kruimel.append(" / ");
+    const a = maak("a", "", p.name);
+    a.href = "#"; a.onclick = (ev) => { ev.preventDefault(); toonBladeren(p, pad.slice(0, i + 1)); };
+    kruimel.appendChild(a);
+  });
+  try {
+    let items;
+    if (!map) {
+      items = [{ id: "root", name: "Mijn Drive" }].concat(await gedeeldeDrives());
+    } else {
+      items = await submappen(map.id);
+    }
+    lijst.replaceChildren();
+    if (map) {
+      const kies = maak("li");
+      const knop = maak("button", "", "Gebruik deze map: " + map.name);
+      knop.onclick = () => {
+        const tekst = pad.map(p => p.name).join(" / ");
+        $("mapPad").value = tekst;
+        bewaarMap(map.id, tekst);
+      };
+      kies.appendChild(knop);
+      lijst.appendChild(kies);
+    }
+    if (!items.length) lijst.appendChild(maak("li", "klein", "Geen submappen."));
+    for (const it of items) {
+      const li = maak("li");
+      li.appendChild(maak("div", "", "📁 " + it.name));
+      const open = maak("button", "secundair", "Openen");
+      open.onclick = () => toonBladeren(it, pad.concat([it]));
+      li.appendChild(open);
+      lijst.appendChild(li);
+    }
+  } catch (e) {
+    lijst.replaceChildren();
+    melding("mapMelding", "fout", vertaalApiFout(e));
+  }
+}
+
+// ---------- Stap 4: weekdocumenten in de agendamap ----------
+async function zoekWeekdocumenten(mapId) {
+  $("stap4").classList.remove("verborgen");
+  $("docsLijst").replaceChildren();
+  melding("docsMelding", "info", "Bezig met zoeken in je agendamap…");
+  try {
+    const maanden = await submappen(mapId);
+    const bronnen = [{ id: mapId, name: "(agendamap zelf)" }].concat(maanden);
+    const perMap = await Promise.all(bronnen.map(async (m) => {
+      const docs = await lijstAlles("'" + m.id + "' in parents and mimeType = '" + DOC_TYPE + "' and trashed = false",
+        "id,name,modifiedTime");
+      return docs.map(d => Object.assign(d, { map: m.name }));
     }));
+    const files = perMap.flat().sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime));
+    const lijst = $("docsLijst");
+    if (!files.length) {
+      melding("docsMelding", "fout", "Geen Google Docs gevonden in deze map of de " + maanden.length + " submappen eronder.");
+      return;
+    }
+    melding("docsMelding", "ok", files.length + " document(en) gevonden in " + maanden.length + " maandmap(pen). Klik op \"Uitlezen\" bij een week.");
+    stapOk(4);
     for (const f of files) {
       const li = maak("li");
       const links = maak("div");
       links.appendChild(maak("div", "", f.name));
-      const map = (f.parents || []).map(p => mappen[p]).filter(Boolean).join(", ");
       const datum = new Date(f.modifiedTime).toLocaleString("nl-BE", { dateStyle: "medium", timeStyle: "short" });
-      links.appendChild(maak("div", "klein", (map ? "Map: " + map + " · " : "") + "gewijzigd " + datum));
+      links.appendChild(maak("div", "klein", "Map: " + f.map + " · gewijzigd " + datum));
       const knop = maak("button", "", "Uitlezen");
       knop.addEventListener("click", () => leesWeek(f));
       li.append(links, knop);
@@ -284,7 +422,7 @@ async function zoekWeekdocumenten() {
   }
 }
 
-// ---------- Stap 4: een week uitlezen ----------
+// ---------- Stap 5: een week uitlezen ----------
 const DAGEN = /^(MAANDAG|DINSDAG|WOENSDAG|DONDERDAG|VRIJDAG|ZATERDAG|ZONDAG)\b/i;
 
 function kleurSoort(style) {
@@ -410,10 +548,10 @@ function verzamelDagen(doc) {
 }
 
 async function leesWeek(f) {
-  $("stap4").classList.remove("verborgen");
+  $("stap5").classList.remove("verborgen");
   $("weekInhoud").replaceChildren();
   melding("weekMelding", "info", "Bezig met uitlezen van \"" + f.name + "\"…");
-  $("stap4").scrollIntoView({ behavior: "smooth" });
+  $("stap5").scrollIntoView({ behavior: "smooth" });
   try {
     const doc = await api("https://docs.googleapis.com/v1/documents/" + f.id + "?includeTabsContent=false");
     const dagen = verzamelDagen(doc);
@@ -424,7 +562,7 @@ async function leesWeek(f) {
     }
     const aantalLessen = dagen.reduce((n, d) => n + d.rijen.filter(r => r.soort === "les").length, 0);
     melding("weekMelding", "ok", "\"" + f.name + "\": " + dagen.length + " dagen en " + aantalLessen + " lesuren uitgelezen.");
-    stapOk(4);
+    stapOk(5);
     toonWeek(dagen);
     toonTechnisch(doc, dagen);
   } catch (e) {

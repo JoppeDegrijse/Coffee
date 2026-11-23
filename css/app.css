@@ -138,11 +138,11 @@ main { max-width: 1100px; margin: 0 auto; padding: 20px 18px 64px; }
 }
 .knop:hover { filter: brightness(1.1); }
 a.knop, a.knop:visited { color: var(--oppervlak); }
-.knop.secundair { background: var(--oppervlak); color: var(--accent); border-color: var(--lijn); font-weight: 600; }
+.knop.secundair, .knop.klein.secundair { background: var(--oppervlak); color: var(--accent); border-color: var(--lijn); font-weight: 600; }
 .knop.secundair:hover { background: var(--oppervlak-2); filter: none; }
 a.knop.secundair { color: var(--accent); }
 .knop.groot { font-size: 1.05rem; padding: 12px 24px; }
-.knop.klein { font-size: .84rem; padding: 4px 10px; margin: 4px 6px 0 0; border-radius: var(--r-klein); }
+.knop.klein { color: var(--oppervlak); font-size: .84rem; padding: 4px 10px; margin: 4px 6px 0 0; border-radius: var(--r-klein); }
 .knop:disabled { opacity: .45; cursor: default; filter: none; }
 .knoppen { display: flex; flex-wrap: wrap; gap: 6px; }
 input[type=text], input[type=date], input[type=datetime-local], textarea {
@@ -303,3 +303,63 @@ body.geen-scroll { overflow: hidden; }
 .zoekresultaten li:hover { background: var(--oppervlak-2); }
 .zoekresultaten li span:nth-of-type(1) { flex: 1; }
 .zoekresultaten img { width: 16px; height: 16px; }
+
+/* ---------- To-do's ---------- */
+.tab-teller {
+  display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 999px;
+  background: var(--karamel); color: #241a15; font-size: .75rem; font-weight: 700; line-height: 18px; text-align: center;
+}
+.snel-rij { display: flex; gap: 8px; align-items: center; margin: 4px 0 8px; }
+.snel-rij .knop { margin: 0; white-space: nowrap; }
+.todolijst { list-style: none; margin: 0; padding: 0; }
+ul.todolijst.kaart { padding: 4px 14px; }
+.todo { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--lijn); }
+.todo:last-child { border-bottom: 0; }
+.todo input[type=checkbox] { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--accent); flex: none; cursor: pointer; }
+.todo-midden { flex: 1; min-width: 0; }
+.todo-tekst { cursor: text; word-break: break-word; border-radius: 4px; }
+.todo-tekst:hover { background: var(--oppervlak-2); }
+.todo.klaar .todo-tekst { text-decoration: line-through; color: var(--tekst-zacht); }
+.todo-extra { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.minichip {
+  font: inherit; font-size: .8rem; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--lijn);
+  background: var(--oppervlak); color: var(--tekst-zacht); cursor: default; line-height: 1.6;
+}
+button.minichip { cursor: pointer; }
+button.minichip:hover { border-color: var(--karamel); color: var(--tekst); }
+.minichip.plan { color: var(--accent); font-weight: 700; }
+.minichip.rood { background: var(--rood-zacht); border-color: var(--rood-lijn); color: var(--rood); }
+.todo-bewerk { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.deadline-label { display: flex; align-items: center; gap: 8px; margin: 0; font-weight: 400; }
+.deadline-label input { width: auto; }
+.knop.gevaar { color: var(--rood); }
+.todo-blok { margin-top: 10px; border-top: 1px dashed var(--perm-lijn); padding-top: 8px; }
+.kaart.vrij .todo-blok, .kaart .todo-blok { border-color: var(--lijn); }
+.todo-kop { margin: 0 0 4px; font-size: .95rem; }
+.todo-vandaag h4 { margin: 0 0 4px; font-size: 1rem; }
+.opslagstatus { white-space: nowrap; }
+input[type=time] { padding: 8px 10px; border: 1px solid var(--lijn); border-radius: var(--r); font: inherit; background: var(--oppervlak); color: var(--tekst); }
+.rij-tijden { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.rij-tijden label { margin: 0; }
+.rij-tijden .knop { margin: 0; }
+.slotgroep { margin-bottom: 10px; background: var(--oppervlak); border: 1px solid var(--lijn); border-radius: var(--r-groot); padding: 10px 14px; }
+.slotgroep.perm { background: var(--perm); border-color: var(--perm-lijn); }
+.slotgroep.vrij { background: var(--vrij); }
+.slotgroep h4 { margin: 0 0 2px; font-size: 1rem; }
+.klaar-lijst { margin-top: 22px; }
+.klaar-lijst summary { cursor: pointer; font-family: var(--titel); font-weight: 700; color: var(--tekst-zacht); }
+.todo-titel { font-weight: 700; margin: 4px 0 10px; }
+.slots { max-height: 55vh; overflow-y: auto; margin-bottom: 8px; }
+.slotdag h4 { margin: 12px 0 6px; font-size: .98rem; }
+.slotdag h4::first-letter { text-transform: uppercase; }
+.slot {
+  display: inline-flex; align-items: center; gap: 8px; font: inherit; font-size: .9rem; cursor: pointer;
+  padding: 6px 12px; border-radius: var(--r); border: 1px solid var(--lijn); background: var(--oppervlak); color: var(--tekst);
+}
+.slot:hover { border-color: var(--karamel); }
+.slot.perm { background: var(--perm); border-color: var(--perm-lijn); }
+.slot.vrij { background: var(--vrij); }
+.slot.avond { background: var(--accent-zacht); }
+.slot.gekozen { outline: 2px solid var(--karamel); }
+.slot-aantal { background: var(--karamel); color: #241a15; border-radius: 999px; font-size: .75rem; font-weight: 700; padding: 0 6px; }
+.todo .uit-blok { margin-left: auto; flex: none; align-self: center; }

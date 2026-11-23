@@ -259,3 +259,52 @@ export async function driveNaam(url) {
   if (!m) return null;
   try { return (await json(DRIVE + "files/" + m[1] + "?fields=name&supportsAllDrives=true")).name; } catch (e) { return null; }
 }
+
+// ---------- Coffee!-gegevens (to-do's …) in je eigen Drive: map "Coffee!" ----------
+const UPLOAD = "https://www.googleapis.com/upload/drive/v3/files";
+const GEGEVENS_MAP = "Coffee!";
+const GEGEVENS_NAAM = "Coffee! gegevens.json";
+
+async function eigenZoek(q, velden = "id,name,version") {
+  const params = new URLSearchParams({ q: q + " and trashed = false", fields: "files(" + velden + ")", corpora: "user", pageSize: "10" });
+  return (await json(DRIVE + "files?" + params)).files || [];
+}
+
+// Zoekt (of maakt) de map en het bestand. Geeft { id, versie } of { id: null } als het bestand nog niet bestaat.
+let gegevensMapId = null;
+export async function gegevensBestand() {
+  const mappen = await eigenZoek("name = '" + GEGEVENS_MAP + "' and mimeType = '" + MAP_TYPE + "' and 'root' in parents");
+  gegevensMapId = mappen[0] ? mappen[0].id : null;
+  if (!gegevensMapId) return { id: null, versie: null };
+  const bestanden = await eigenZoek("name = '" + GEGEVENS_NAAM + "' and '" + gegevensMapId + "' in parents");
+  return bestanden[0] ? { id: bestanden[0].id, versie: bestanden[0].version } : { id: null, versie: null };
+}
+
+export async function gegevensVersie(id) {
+  return (await json(DRIVE + "files/" + id + "?fields=version")).version;
+}
+
+export async function leesGegevens(id) {
+  return (await verzoek(DRIVE + "files/" + id + "?alt=media")).json();
+}
+
+// Bewaart de gegevens; maakt map en bestand aan als ze nog niet bestaan. Geeft { id, versie }.
+export async function schrijfGegevens(id, inhoud) {
+  const tekst = JSON.stringify(inhoud);
+  if (id) {
+    const r = await json(UPLOAD + "/" + id + "?uploadType=media&fields=id,version",
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: tekst });
+    return { id: r.id, versie: r.version };
+  }
+  if (!gegevensMapId) {
+    const map = await postJson(DRIVE + "files?fields=id", { name: GEGEVENS_MAP, mimeType: MAP_TYPE, parents: ["root"] });
+    gegevensMapId = map.id;
+  }
+  const grens = "coffee" + Math.random().toString(36).slice(2);
+  const body = "--" + grens + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" +
+    JSON.stringify({ name: GEGEVENS_NAAM, mimeType: "application/json", parents: [gegevensMapId] }) +
+    "\r\n--" + grens + "\r\nContent-Type: application/json\r\n\r\n" + tekst + "\r\n--" + grens + "--";
+  const r = await json(UPLOAD + "?uploadType=multipart&fields=id,version",
+    { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + grens }, body });
+  return { id: r.id, versie: r.version };
+}

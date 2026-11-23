@@ -2,6 +2,8 @@
 import * as G from "./google.js";
 import * as W from "./weken.js";
 import * as B from "./bewerken.js";
+import * as T from "./todo.js";
+import * as D from "./gegevens.js";
 
 // ---------- Instellingen (in deze browser) ----------
 const INST_SLEUTEL = "coffee_instellingen";
@@ -272,7 +274,7 @@ function blokKaart(rij, datum, opties = {}) {
   let extra = null;
   if (rij.soort === "vrij") {
     extra = h("div", {}, h("p", { class: "nadruk" }, "Je bent vrij en hoeft niet op school te zijn."),
-      h("p", { class: "klein" }, "Hier komen straks de to-do's die je in dit blok plant."));
+      todoBlok({ datum: W.isoDatum(datum), start: rij.start, eind: rij.eind, soort: "vrij", titel: "LO (vrij)" }));
   } else if (rij.soort === "perm") {
     let zwem = null;
     if (rij.halfP) {
@@ -283,7 +285,7 @@ function blokKaart(rij, datum, opties = {}) {
     }
     const echtePerm = !rij.halfP || W.isZwemweek(staat.inst.zwemweek, datum) === false;
     extra = h("div", {}, zwem,
-      echtePerm ? h("p", { class: "klein" }, "Hier komen straks de to-do's die je in dit permanentieblok plant.") : null);
+      echtePerm ? todoBlok({ datum: W.isoDatum(datum), start: rij.start, eind: rij.eind, soort: "perm", titel: rij.titel }) : null);
   }
   return h("article", { class: "kaart blok " + rijKlasse(rij) + (opties.groot ? " groot" : "") },
     h("header", {},
@@ -363,6 +365,7 @@ async function toonNu(doel) {
       h("ul", {}, vandaagRood.map(x => h("li", {}, h("span", { class: "tijd" }, W.tijdTekst(x.rij.start)), " ", x.t)))));
   }
 
+  doel.appendChild(todoVandaagKaart());
   const hoofd = h("section", { class: "hoofd" });
   doel.appendChild(hoofd);
 
@@ -389,8 +392,10 @@ async function toonNu(doel) {
       toonVorigeLes(vorigeVak, week, { datum: W.middernacht(n), rij: eerste });
     }
   } else if (laatste && nuMin >= laatste.eind) {
+    const av = avondInstelling();
     hoofd.appendChild(h("div", { class: "kaart" }, h("h3", {}, "De lesdag zit erop 🎉"),
-      h("p", { class: "klein" }, "Straks kun je hier je avondblok met to-do's plannen.")));
+      weekdagVan(n) < 5 ? [h("p", { class: "klein" }, "Vanavond, " + av.start + "–" + av.eind + ":"),
+        todoBlok({ datum: W.isoDatum(n), start: tijdMin(av.start), eind: tijdMin(av.eind), soort: "avond", titel: "Avond" })] : null));
   }
 
   if (volgende && volgende !== eerste) {
@@ -531,6 +536,16 @@ function toonInstellingen(doel) {
       h("button", { class: "knop", onclick: () => { inst.zwemweek = zwemVeld.value || null; bewaarInstellingen(); zeg("ok", "Zwemritme opgeslagen."); } }, "Opslaan")
     ),
     h("section", { class: "kaart" },
+      h("h3", {}, "Avondblok"),
+      h("p", { class: "klein" }, "Het moment 's avonds (maandag tot vrijdag) waarin je to-do's kunt plannen."),
+      (() => {
+        const av = avondInstelling();
+        const s = h("input", { type: "time", value: av.start }), e = h("input", { type: "time", value: av.eind });
+        return h("div", { class: "rij-tijden" }, h("label", {}, "Van", s), h("label", {}, "Tot", e),
+          h("button", { class: "knop", onclick: () => { if (s.value && e.value && s.value < e.value) { inst.avond = { start: s.value, eind: e.value }; bewaarInstellingen(); zeg("ok", "Avondblok opgeslagen."); } else zeg("fout", "Kies een begin- en einduur."); } }, "Opslaan"));
+      })()
+    ),
+    h("section", { class: "kaart" },
       h("h3", {}, "Testtijd"),
       h("p", { class: "klein" }, "Doe alsof het een ander moment is, om het dashboard 's avonds of in het weekend uit te proberen."),
       testVeld,
@@ -545,6 +560,218 @@ function toonInstellingen(doel) {
 function lokaal(d) {
   const x = new Date(d);
   return W.isoDatum(x) + "T" + W.tijdTekst(W.minutenVan(x));
+}
+
+// ---------- To-do's ----------
+const STANDAARD_AVOND = { start: "19:30", eind: "21:00" };
+const avondInstelling = () => staat.inst.avond || STANDAARD_AVOND;
+const tijdMin = (t) => { const [u, m] = t.split(":").map(Number); return u * 60 + m; };
+const todos = () => D.data().todos.filter(t => !t.verwijderd);
+
+// Stukken van het scherm die zichzelf verversen als de to-do's veranderen
+const levend = new Set();
+function levendVak(maak) {
+  const el = h("div", { class: "levend" });
+  const vul = () => el.replaceChildren(...[].concat(maak()).filter(Boolean));
+  vul();
+  levend.add({ el, vul });
+  return el;
+}
+D.opWijziging(() => {
+  for (const v of [...levend]) { if (v.el.isConnected) v.vul(); else levend.delete(v); }
+  const teller = document.querySelector(".tab-teller");
+  if (teller) { const n = T.aantalOpen(todos(), nu()); teller.textContent = n || ""; teller.classList.toggle("verborgen", !n); }
+});
+
+function todoTab(knop) {
+  const n = T.aantalOpen(todos(), nu());
+  const k = knop("todo", "To-do");
+  k.appendChild(h("span", { class: "tab-teller" + (n ? "" : " verborgen"), title: "Nog in te plannen" }, n ? String(n) : ""));
+  return k;
+}
+
+function slotTekst(slot, kort = false) {
+  const d = W.vanIso(slot.datum);
+  const vandaag = W.isoDatum(nu()), morgen = W.isoDatum(W.plusDagen(nu(), 1));
+  const dag = slot.datum === vandaag ? "Vandaag" : slot.datum === morgen ? "Morgen" : datumTekst(d, { weekday: kort ? "short" : "long", day: "numeric", month: "short" });
+  const wat = slot.soort === "avond" ? "avond" : slot.titel;
+  return dag + " " + W.tijdTekst(slot.start) + ", " + wat;
+}
+
+function wijzigTodo(id, fn) {
+  D.wijzig(g => { const t = g.todos.find(x => x.id === id); if (t) { fn(t); t.gewijzigd = Date.now(); } });
+}
+
+function todoItem(t, opties = {}) {
+  const li = h("li", { class: "todo" + (t.klaar ? " klaar" : "") });
+  const vink = h("input", { type: "checkbox", "aria-label": "Klaar", checked: t.klaar || null });
+  vink.addEventListener("change", () => wijzigTodo(t.id, x => { x.klaar = vink.checked; }));
+  const tekst = h("span", { class: "todo-tekst", tabindex: "0", title: "Klik om aan te passen" }, ...metLinks(t.tekst));
+  const bewerk = () => {
+    const veld = h("input", { type: "text", value: t.tekst });
+    const datum = h("input", { type: "date", value: t.deadline || "", title: "Deadline (mag leeg)" });
+    const klaarMet = (opslaan) => {
+      if (opslaan && veld.value.trim()) wijzigTodo(t.id, x => { x.tekst = veld.value.trim(); x.deadline = datum.value || null; });
+      else D.wijzig(() => {});   // gewoon opnieuw tonen
+    };
+    veld.addEventListener("keydown", e => { if (e.key === "Enter") klaarMet(true); if (e.key === "Escape") klaarMet(false); });
+    li.replaceChildren(h("div", { class: "todo-bewerk" }, veld,
+      h("label", { class: "klein deadline-label" }, "Deadline", datum),
+      h("div", { class: "knoppen" },
+        h("button", { class: "knop klein", onclick: () => klaarMet(true) }, "Opslaan"),
+        h("button", { class: "knop klein secundair", onclick: () => klaarMet(false) }, "Annuleren"),
+        h("button", { class: "knop klein secundair gevaar", onclick: () => wijzigTodo(t.id, x => { x.verwijderd = true; }) }, "Verwijderen"))));
+    setTimeout(() => veld.focus(), 0);
+  };
+  tekst.addEventListener("click", (e) => { if (e.target.closest("a")) return; bewerk(); });
+  tekst.addEventListener("keydown", e => { if (e.key === "Enter") bewerk(); });
+
+  const extra = [];
+  if (t.deadline && !t.klaar) {
+    const telaat = t.deadline < W.isoDatum(nu());
+    extra.push(h("span", { class: "minichip" + (telaat ? " rood" : "") }, "⏰ " + datumTekst(W.vanIso(t.deadline), { weekday: "short", day: "numeric", month: "short" })));
+  }
+  if (!t.klaar && t.gepland && T.isVoorbij(t.gepland, nu())) extra.push(h("span", { class: "minichip rood" }, "Gemist: " + slotTekst(t.gepland, true)));
+  const gepland = t.gepland && !T.isVoorbij(t.gepland, nu());
+  if (!t.klaar && !opties.inBlok) {
+    extra.push(gepland
+      ? h("button", { class: "minichip plan", title: "Ander moment kiezen", onclick: () => openInplanner(t) }, opties.inGroep ? "📅 Ander moment" : "📅 " + slotTekst(t.gepland, true))
+      : h("button", { class: "minichip plan", onclick: () => openInplanner(t) }, "📅 Inplannen"));
+  }
+  li.append(vink, h("div", { class: "todo-midden" }, tekst, extra.length ? h("div", { class: "todo-extra" }, extra) : null));
+  if (!t.klaar && opties.inBlok) {
+    li.append(h("button", { class: "minichip uit-blok", title: "Uit dit blok halen (terug naar 'nog in te plannen')", "aria-label": "Uit dit blok halen",
+      onclick: () => wijzigTodo(t.id, x => { x.gepland = null; }) }, "✕"));
+  }
+  return li;
+}
+
+function snelToevoegen(plaatshouder, gepland = null) {
+  const veld = h("input", { type: "text", class: "snel", placeholder: plaatshouder, "aria-label": plaatshouder });
+  const voegToe = () => {
+    const tekst = veld.value.trim();
+    if (!tekst) return;
+    D.wijzig(g => g.todos.push(T.nieuweTodo(tekst, gepland)));
+    veld.value = "";
+    setTimeout(() => { const nieuw = document.querySelector("input.snel[placeholder='" + plaatshouder.replace(/'/g, "\\'") + "']"); if (nieuw) nieuw.focus(); }, 0);
+  };
+  veld.addEventListener("keydown", e => { if (e.key === "Enter") voegToe(); });
+  return h("div", { class: "snel-rij" }, veld, h("button", { class: "knop klein", onclick: voegToe }, "Toevoegen"));
+}
+
+// To-do's van één blok (P, LO of avond), met een veld om er meteen een toe te voegen
+function todoBlok(slot) {
+  const lijst = levendVak(() => {
+    const items = T.inBlok(todos(), slot.datum, slot.start, slot.soort);
+    const open = items.filter(t => !t.klaar), klaar = items.filter(t => t.klaar);
+    return [
+      h("h4", { class: "todo-kop" }, open.length ? "To-do's in dit blok" : "Nog niets gepland in dit blok"),
+      open.length || klaar.length ? h("ul", { class: "todolijst" }, open.concat(klaar).map(t => todoItem(t, { inBlok: true }))) : null
+    ];
+  });
+  return h("div", { class: "todo-blok" }, lijst, snelToevoegen("Nieuwe to-do voor dit blok", { ...slot }));
+}
+
+// Kaart op het dashboard: wat staat er vandaag nog gepland?
+function todoVandaagKaart() {
+  return levendVak(() => {
+    const iso = W.isoDatum(nu());
+    const nuMin = W.minutenVan(nu());
+    // wat in het lopende blok staat, zie je al in de grote kaart
+    const vandaag = todos().filter(t => !t.klaar && t.gepland && t.gepland.datum === iso && !T.isVoorbij(t.gepland, nu()) &&
+                                        !(t.gepland.start <= nuMin && nuMin < t.gepland.eind))
+      .sort((a, b) => a.gepland.start - b.gepland.start);
+    const open = T.aantalOpen(todos(), nu());
+    if (!vandaag.length && !open) return null;
+    return h("div", { class: "kaart todo-vandaag" },
+      h("h4", {}, "✅ To-do's vandaag"),
+      vandaag.length ? h("ul", { class: "todolijst" }, vandaag.map(t => {
+        const li = todoItem(t, { inBlok: true });
+        li.querySelector(".todo-midden").prepend(h("span", { class: "tijd" }, W.tijdTekst(t.gepland.start) + " "));
+        return li;
+      })) : h("p", { class: "klein" }, "Niets meer gepland voor vandaag."),
+      open ? h("p", { class: "klein" }, h("a", { href: "#", onclick: (e) => { e.preventDefault(); staat.weergave = "todo"; toon(); } },
+        open === 1 ? "1 to-do wacht nog op een moment" : open + " to-do's wachten nog op een moment")) : null);
+  });
+}
+
+function dagKop(iso) {
+  const kort = datumTekst(W.vanIso(iso), { weekday: "short", day: "numeric", month: "short" });
+  if (iso === W.isoDatum(nu())) return "Vandaag (" + kort + ")";
+  if (iso === W.isoDatum(W.plusDagen(nu(), 1))) return "Morgen (" + kort + ")";
+  return datumTekst(W.vanIso(iso), { weekday: "long", day: "numeric", month: "long" });
+}
+
+// Venster: een moment kiezen
+async function openInplanner(todo) {
+  const lijst = h("div", { class: "slots" }, h("p", { class: "laden" }, "Vrije momenten zoeken…"));
+  const venster = sluitbaarVenster([
+    h("h3", {}, "📅 Wanneer doe je dit?"),
+    h("p", { class: "todo-titel" }, todo.tekst),
+    lijst,
+    h("div", { class: "knoppen" },
+      todo.gepland ? h("button", { class: "knop secundair", onclick: () => { wijzigTodo(todo.id, x => { x.gepland = null; }); venster.sluit(); } }, "Niet meer inplannen") : null,
+      h("button", { class: "knop secundair", onclick: () => venster.sluit() }, "Annuleren"))
+  ], { klein: true });
+  const dagen = new Map();
+  for (let i = 0; i < 14; i++) {
+    const d = W.plusDagen(W.middernacht(nu()), i);
+    const week = W.weekVoorDatum(staat.weken, d);
+    if (!week) continue;
+    try {
+      const dg = (await dagenVan(week)).find(x => x.weekdag === weekdagVan(d));
+      if (dg) dagen.set(W.isoDatum(d), dg);
+    } catch (e) { /* week niet leesbaar: overslaan */ }
+  }
+  const slots = T.vrijeBlokken(dagen, nu(), 14, { zwemweek: staat.inst.zwemweek, avond: avondInstelling() });
+  if (!slots.length) { lijst.replaceChildren(h("p", { class: "klein" }, "Geen vrije momenten gevonden in de komende twee weken.")); return; }
+  const perDag = new Map();
+  for (const s of slots) { if (!perDag.has(s.datum)) perDag.set(s.datum, []); perDag.get(s.datum).push(s); }
+  lijst.replaceChildren(...[...perDag].map(([datum, ss]) => h("div", { class: "slotdag" },
+    h("h4", {}, dagKop(datum)),
+    h("div", { class: "knoppen" }, ss.map(s => {
+      const al = T.inBlok(todos(), s.datum, s.start, s.soort).filter(t => !t.klaar && t.id !== todo.id).length;
+      const gekozen = todo.gepland && T.slotSleutel(todo.gepland) === T.slotSleutel(s);
+      return h("button", { class: "slot " + s.soort + (gekozen ? " gekozen" : ""), onclick: () => { wijzigTodo(todo.id, x => { x.gepland = { ...s }; }); venster.sluit(); } },
+        h("span", { class: "tijd" }, W.tijdTekst(s.start) + "–" + W.tijdTekst(s.eind)),
+        h("span", {}, s.soort === "avond" ? "🌙 Avond" : s.soort === "vrij" ? "LO (vrij)" : s.titel),
+        al ? h("span", { class: "slot-aantal", title: "Al gepland in dit blok" }, String(al)) : null);
+    })))));
+}
+
+// Het to-do-scherm
+async function toonTodo(doel) {
+  const statusVak = levendVak(() => {
+    const st = D.status();
+    return h("span", { class: "klein opslagstatus" }, st === "bezig" ? "Bezig met bewaren…" : st === "fout" ? "⚠️ Niet bewaard in je Drive, Coffee! probeert opnieuw" : st === "offline" ? "Niet verbonden: verbind opnieuw om te bewaren" : "Bewaard in je Drive (map Coffee!)");
+  });
+  doel.replaceChildren(
+    h("div", { class: "nu-kop" }, h("h2", {}, "To-do's"), statusVak),
+    snelToevoegen("Wat moet je nog doen of onthouden?"),
+    levendVak(() => {
+      const g = T.groepeer(todos(), nu());
+      const uit = [];
+      uit.push(h("h3", { class: "sectie" }, "Nog in te plannen"));
+      uit.push(g.teplannen.length ? h("ul", { class: "todolijst kaart" }, g.teplannen.map(t => todoItem(t)))
+        : h("p", { class: "klein" }, "Alles heeft een moment gekregen. ☕"));
+      if (g.gepland.length) {
+        uit.push(h("h3", { class: "sectie" }, "Ingepland"));
+        for (const groep of g.gepland) {
+          uit.push(h("div", { class: "slotgroep " + groep.slot.soort },
+            h("h4", {}, slotTekst(groep.slot)),
+            h("ul", { class: "todolijst" }, groep.items.map(t => todoItem(t, { inGroep: true })))));
+        }
+      }
+      if (g.klaar.length) {
+        uit.push(h("details", { class: "klaar-lijst" },
+          h("summary", {}, "Klaar (" + g.klaar.length + ")"),
+          h("ul", { class: "todolijst" }, g.klaar.slice(0, 50).map(t => todoItem(t))),
+          h("button", { class: "knop klein secundair", onclick: () => D.wijzig(dd => dd.todos.forEach(t => { if (t.klaar && !t.verwijderd) { t.verwijderd = true; t.gewijzigd = Date.now(); } })) }, "Klare to-do's wissen")));
+      }
+      return uit;
+    })
+  );
+  setTimeout(() => { const v = doel.querySelector("input.snel"); if (v && matchMedia("(pointer: fine)").matches) v.focus(); }, 0);
 }
 
 // ---------- Bewerken ----------
@@ -803,7 +1030,7 @@ function kopbalk() {
     h("div", { class: "merk" }, "☕ Coffee!"),
     staat.testtijd ? h("button", { class: "testtijd", title: "Klik om terug te keren naar de echte tijd", onclick: () => { staat.testtijd = null; toon(); } },
       "Testtijd " + datumTekst(nu(), { weekday: "short", day: "numeric", month: "short" }) + " " + W.tijdTekst(W.minutenVan(nu())) + " ✕") : null,
-    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"),
+    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"), todoTab(knop),
       h("button", { class: "tab thema-knop", title: THEMA_INFO[staat.inst.thema || "auto"][1] + " (klik om te wisselen)",
         "aria-label": THEMA_INFO[staat.inst.thema || "auto"][1], onclick: volgendThema }, THEMA_INFO[staat.inst.thema || "auto"][0]),
       knop("instellingen", "⚙︎"))
@@ -820,6 +1047,7 @@ async function toon() {
     if (staat.weergave === "instellingen") return toonInstellingen(inhoud);
     if (!staat.inst.map) { staat.weergave = "instellingen"; return toon(); }
     if (staat.weergave === "week") await toonWeek(inhoud);
+    else if (staat.weergave === "todo") await toonTodo(inhoud);
     else await toonNu(inhoud);
   } catch (e) {
     if (mijnBeurt !== bezigMetTonen) return;
@@ -861,6 +1089,7 @@ async function start(viaKlik) {
     }
     $("app").replaceChildren(h("div", { class: "startscherm" }, h("div", { class: "beker draait" }, "☕"), h("p", {}, "Agenda zetten…")));
     staat.gebruiker = await G.gebruiker();
+    await D.laad();
     if (!staat.inst.map) {
       try { staat.inst.map = await G.zoekPad(STANDAARD_PAD); bewaarInstellingen(); } catch (e) { /* zelf instellen */ }
     }
@@ -874,8 +1103,11 @@ async function start(viaKlik) {
 
 // Elke halve minuut het dashboard verversen (enkel bij echte tijd)
 setInterval(() => {
-  if (staat.weergave === "nu" && !staat.testtijd && G.isAangemeld() && !document.querySelector("details[open]") && !document.querySelector(".venster")) toon();
+  if (staat.weergave === "nu" && !staat.testtijd && G.isAangemeld() && !document.querySelector("details[open]") && !document.querySelector(".venster") &&
+      !(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) toon();
 }, 30000);
+
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") D.ververs(); });
 
 pasThemaToe();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", pasThemaToe);

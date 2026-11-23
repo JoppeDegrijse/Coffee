@@ -78,7 +78,7 @@ export function vorigeLes(lessen, huidige) {
   if (!vak) return null;
   const tijdstip = huidige.datum.getTime() + (huidige.rij.start || 0) * 60000;
   const eerder = lessen.filter(l =>
-    vakSleutel(l.rij.vak) === vak &&
+    vakSleutel(l.rij.vak) === vak && !l.rij.idem &&
     l.datum.getTime() + (l.rij.start || 0) * 60000 < tijdstip &&
     l.rij.onderwerp && !NIETSZEGGEND.test(l.rij.onderwerp)
   );

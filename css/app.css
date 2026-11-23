@@ -207,3 +207,14 @@ input:focus, textarea:focus { outline: 2px solid var(--blauw); outline-offset: -
 .nieuwe-week .kaart { margin-top: 8px; max-width: 420px; }
 .vak.open { background: #fff; color: var(--grijs); border: 1px dashed #b9b9b9; }
 h3.open { color: var(--grijs); font-style: italic; font-weight: 500; }
+.linkchip {
+  display: inline-flex; align-items: center; gap: 5px; vertical-align: baseline;
+  background: #fff; border: 1px solid var(--rand); border-radius: 14px; padding: 1px 9px 1px 6px; margin: 1px 2px;
+  font-size: .88rem; color: var(--tekst); text-decoration: none; max-width: 100%;
+}
+.linkchip:hover { border-color: var(--blauw); background: var(--blauw-licht); }
+.linkchip span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.materiaal ul { list-style: none; padding-left: 0; }
+.materiaal li { padding: 2px 0; }
+.materiaal li::before { content: "– "; color: var(--grijs); }
+.chip.idem { background: #efe6da; color: var(--koffie-licht); }

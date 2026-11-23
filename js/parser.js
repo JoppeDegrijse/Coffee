@@ -116,6 +116,13 @@ function verwerkDagtabel(rijen, dag) {
         rood: inhoud.rood.concat(materiaal.rood),
         links: [...new Set(inhoud.links.concat(materiaal.links))]
       };
+      // IDEM = zelfde inhoud als de vorige les van dit vak (Coffee! vult die aan)
+      const isIdem = (cel) => {
+        const l = cel.regels.map(r => r.tekst.trim()).filter(Boolean);
+        return l.some(x => /\bidem\b/i.test(x)) && l.every(x => /^(lesonderwerp:\s*)?idem\.?$/i.test(x) || /^(doelen|verloop):?$/i.test(x));
+      };
+      rij.idem = isIdem(inhoud);
+      rij.materiaalIdem = isIdem(materiaal) || (rij.idem && !rij.materiaal.length);
       if (vakCel.bereik && inhoud.bereik && materiaal.bereik) {
         rij.bron = {
           vak: vakCel.bereik, inhoud: inhoud.bereik, materiaal: materiaal.bereik,

@@ -61,7 +61,23 @@ function linkLabel(url) {
   } catch (e) { return "link"; }
 }
 
-// Tekst met klikbare URL's
+function linkIcoon(url) {
+  if (/docs\.google\.com\/document/.test(url)) return "📄";
+  if (/docs\.google\.com\/spreadsheets/.test(url)) return "📊";
+  if (/docs\.google\.com\/presentation/.test(url)) return "📽️";
+  if (/docs\.google\.com\/forms/.test(url)) return "📝";
+  if (/drive\.google\.com\/drive\/.*folders/.test(url)) return "📁";
+  if (/drive\.google\.com/.test(url)) return "📎";
+  if (/youtu/.test(url)) return "▶️";
+  if (/prowise/.test(url)) return "🖥️";
+  return "🔗";
+}
+function linkKnop(url, label) {
+  return h("a", { class: "linkchip", href: url, target: "_blank", rel: "noopener", title: url },
+    h("span", { class: "icoon" }, linkIcoon(url)), h("span", {}, label));
+}
+
+// Tekst met klikbare links (als knopjes)
 function metLinks(tekst) {
   const delen = [];
   const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|https?:\/\/[^\s)]+/g;
@@ -69,7 +85,7 @@ function metLinks(tekst) {
   while ((m = re.exec(tekst))) {
     if (m.index > laatste) delen.push(tekst.slice(laatste, m.index));
     const url = m[1] != null ? m[2] : m[0];
-    delen.push(h("a", { href: url, target: "_blank", rel: "noopener" }, m[1] != null ? m[1] : linkLabel(url)));
+    delen.push(linkKnop(url, m[1] != null ? m[1] : linkLabel(url)));
     laatste = m.index + m[0].length;
   }
   if (laatste < tekst.length) delen.push(tekst.slice(laatste));
@@ -183,22 +199,56 @@ function materiaalWeergave(rij) {
     h("h4", {}, "🎒 Materiaal"),
     items.length ? h("ul", {}, items.map(m => h("li", {}, ...metLinks(m)))) : null,
     losseLinks.length ? h("div", { class: "knoppen" },
-      losseLinks.map(l => h("a", { class: "knop klein", href: l, target: "_blank", rel: "noopener" }, "🔗 " + linkLabel(l)))) : null
+      losseLinks.map(l => linkKnop(l, linkLabel(l)))) : null
   );
+}
+
+// IDEM-les: toon de inhoud van de vorige les van hetzelfde vak (zonder de gekleurde regels van die dag)
+function weergaveRij(rij) {
+  const bron = rij.idem && rij.idemVan;
+  if (!bron) return rij;
+  return {
+    ...rij,
+    onderwerp: bron.rij.onderwerp,
+    doelen: bron.rij.doelen,
+    regels: bron.rij.regels.filter(r => !r.kleur),
+    materiaal: rij.materiaalIdem ? bron.rij.materiaal : rij.materiaal,
+    links: [...new Set(rij.materiaalIdem ? bron.rij.links : rij.links.concat(bron.rij.links))]
+  };
+}
+
+function lesTitel(rij) {
+  const t = weergaveRij(rij);
+  return t.onderwerp ? t.onderwerp + (rij.idem && rij.idemVan ? " (idem)" : "") : "Nog in te vullen";
 }
 
 function lesKaart(rij, opties = {}) {
   const kanBewerken = !opties.voorbeeld && rij.bron && rij.week && rij.week.bestand.mimeType === G.DOC_TYPE;
+  const t = opties.voorbeeld ? rij : weergaveRij(rij);
+  const idemChip = !opties.voorbeeld && rij.idem
+    ? h("span", { class: "chip idem" }, rij.idemVan
+        ? "↺ IDEM · zoals " + datumTekst(rij.idemVan.datum, { weekday: "short", day: "numeric", month: "short" })
+        : "↺ IDEM · vorige les niet gevonden")
+    : null;
   return h("article", { class: "kaart les" + (opties.groot ? " groot" : "") },
     h("header", {},
       h("div", { class: "tijd" }, rij.uur),
       vakLabel(rij.vak),
-      h("h3", { class: rij.onderwerp ? "" : "open" }, rij.onderwerp || "Nog in te vullen"),
+      h("h3", { class: t.onderwerp ? "" : "open" }, t.onderwerp || "Nog in te vullen"),
       kanBewerken ? h("button", { class: "knop klein secundair bewerk", onclick: (e) => { e.stopPropagation(); openBewerker(rij); } }, "✏️ Bewerken") : null
     ),
-    chips(rij),
-    h("div", { class: "lesinhoud" }, regelsWeergave(rij), materiaalWeergave(rij))
+    h("div", { class: "chips" }, idemChip, chips(t).childNodes.length ? [...chips(t).childNodes] : null),
+    h("div", { class: "lesinhoud" }, regelsWeergave(t), materiaalWeergave(t))
   );
+}
+
+// IDEM-lessen koppelen aan de vorige les van hetzelfde vak
+async function koppelIdem(week) {
+  if (!week) return;
+  const lessen = await lessenUit(wekenRond(week, 4));
+  for (const l of lessen) {
+    if (l.rij.idem && !l.rij.idemVan) { const v = W.vorigeLes(lessen, l); if (v) l.rij.idemVan = v; }
+  }
 }
 
 function blokKaart(rij, datum, opties = {}) {
@@ -237,7 +287,7 @@ function dagLijst(dag, datum, nuMin) {
   for (const rij of dag.rijen) {
     const bezig = nuMin != null && rij.start != null && nuMin >= rij.start && nuMin < rij.eind;
     const voorbij = nuMin != null && rij.eind != null && nuMin >= rij.eind;
-    const titel = rij.soort === "les" ? (rij.onderwerp || "Nog in te vullen") : rij.soort === "vrij" ? "Vrij" : rij.titel;
+    const titel = rij.soort === "les" ? lesTitel(rij) : rij.soort === "vrij" ? "Vrij" : rij.titel;
     const det = h("details", { class: "rij " + rijKlasse(rij) + (bezig ? " bezig" : "") + (voorbij ? " voorbij" : "") },
       h("summary", {},
         h("span", { class: "tijd" }, W.tijdTekst(rij.start)),
@@ -273,6 +323,7 @@ async function toonNu(doel) {
 
   doel.appendChild(h("p", { class: "laden" }, "Je agenda wordt geladen…"));
   const dagen = await dagenVan(week);
+  await koppelIdem(week);
   doel.querySelector(".laden").remove();
   const dag = dagen.find(d => d.weekdag === weekdagVan(n));
   const nuMin = W.minutenVan(n);
@@ -301,7 +352,7 @@ async function toonNu(doel) {
   if (huidig) {
     hoofd.appendChild(h("div", { class: "label-boven" }, "Nu bezig · nog " + (huidig.eind - nuMin) + " min"));
     hoofd.appendChild(rijKaart(huidig, n, { groot: true }));
-    if (huidig.soort === "les") {
+    if (huidig.soort === "les" && !huidig.idem) {
       const vorigeVak = h("div", { class: "vorige" }, h("p", { class: "klein" }, "Vorige les zoeken…"));
       hoofd.appendChild(vorigeVak);
       toonVorigeLes(vorigeVak, week, { datum: W.middernacht(n), rij: huidig });
@@ -309,7 +360,7 @@ async function toonNu(doel) {
   } else if (eerste && nuMin < eerste.start) {
     hoofd.appendChild(h("div", { class: "label-boven" }, "Straks · om " + W.tijdTekst(eerste.start)));
     hoofd.appendChild(rijKaart(eerste, n, { groot: true }));
-    if (eerste.soort === "les") {
+    if (eerste.soort === "les" && !eerste.idem) {
       const vorigeVak = h("div", { class: "vorige" });
       hoofd.appendChild(vorigeVak);
       toonVorigeLes(vorigeVak, week, { datum: W.middernacht(n), rij: eerste });
@@ -324,7 +375,7 @@ async function toonNu(doel) {
     const kort = h("details", { class: "rij " + rijKlasse(volgende) },
       h("summary", {}, h("span", { class: "tijd" }, W.tijdTekst(volgende.start)),
         rijLabel(volgende),
-        h("span", { class: "titel" }, volgende.soort === "les" ? volgende.onderwerp : volgende.soort === "vrij" ? "Vrij" : volgende.titel)),
+        h("span", { class: "titel" }, volgende.soort === "les" ? lesTitel(volgende) : volgende.soort === "vrij" ? "Vrij" : volgende.titel)),
       rijKaart(volgende, n));
     hoofd.appendChild(kort);
   }
@@ -345,7 +396,7 @@ async function toonVorigeLes(vak, week, huidige) {
     vak.appendChild(h("details", { class: "rij les" },
       h("summary", {},
         h("span", { class: "label-inline" }, vorige.zelfdeReeks ? "Vorige les in deze reeks" : "Vorige les " + vakVoluit(vorige.rij.vak)),
-        h("span", { class: "titel" }, datumTekst(vorige.datum, { weekday: "short", day: "numeric", month: "short" }) + " · " + vorige.rij.onderwerp)),
+        h("span", { class: "titel" }, datumTekst(vorige.datum, { weekday: "short", day: "numeric", month: "short" }) + " · " + lesTitel(vorige.rij))),
       lesKaart(vorige.rij)));
   } catch (e) {
     vak.replaceChildren(h("p", { class: "klein" }, "Vorige les kon niet geladen worden."));
@@ -358,7 +409,7 @@ async function toonVolgendeSchooldag(doel, n) {
     const week = W.weekVoorDatum(staat.weken, d);
     if (!week) continue;
     let dagen;
-    try { dagen = await dagenVan(week); } catch (e) { continue; }
+    try { dagen = await dagenVan(week); await koppelIdem(week); } catch (e) { continue; }
     const dag = dagen.find(x => x.weekdag === weekdagVan(d));
     if (dag && dag.rijen.some(r => r.soort === "les")) {
       doel.appendChild(h("h3", { class: "sectie" }, "Volgende schooldag: " + datumTekst(d)));
@@ -391,6 +442,7 @@ async function toonWeek(doel) {
   );
   doel.replaceChildren(navigatie, nieuweWeekKnop(), h("p", { class: "laden" }, "Week wordt geladen…"));
   const dagen = await dagenVan(week);
+  await koppelIdem(week);
   doel.querySelector(".laden").remove();
   const raster = h("div", { class: "weekraster" });
   for (const dag of dagen) {
@@ -565,8 +617,18 @@ function openBewerker(rij) {
   const onderwerpVeld = h("input", { type: "text", value: v.onderwerp, placeholder: "bv. VLL kern 7 dag 15: herhaling" });
   onderwerpVeld.addEventListener("input", () => { v.onderwerp = onderwerpVeld.value; ververs(); });
 
+  // Een geplakte link wordt een knop; bij een Drive-link zoekt Coffee! de bestandsnaam op
+  const plakLink = (el) => el.addEventListener("paste", async (e) => {
+    const tekst = ((e.clipboardData || window.clipboardData).getData("text") || "").trim();
+    if (!/^https?:\/\/\S+$/.test(tekst)) return;
+    e.preventDefault();
+    const naam = B.isDriveLink(tekst) ? await G.driveNaam(tekst) : null;
+    voegInBijCursor(el, "[" + (naam || linkLabel(tekst)).replace(/[\[\]]/g, "") + "](" + tekst + ")");
+  });
+  plakLink(onderwerpVeld);
   const tekstvak = (naam, rijen, plaatshouder) => {
     const el = h("textarea", { rows: rijen, placeholder: plaatshouder, spellcheck: "true" });
+    plakLink(el);
     el.value = v[naam];
     el.addEventListener("input", (e) => {
       v[naam] = el.value; ververs();
@@ -606,12 +668,9 @@ function openBewerker(rij) {
   opslaanKnop.addEventListener("click", async () => {
     const cellen = B.gewijzigdeCellen(origineel, v);
     if (!cellen.length) { venster.sluit(); document.removeEventListener("keydown", opEscape); return; }
-    const alle = B.veldenNaarRegels(v);
-    const regels = {};
-    cellen.forEach(k => { regels[k] = alle[k]; });
     opslaanKnop.disabled = true; opslaanKnop.textContent = "Bezig met opslaan…";
     try {
-      await G.schrijfLes(rij.week.bestand, rij.plaats, rij.bron.tekst, regels);
+      await G.schrijfLes(rij.week.bestand, rij.plaats, rij.bron.tekst, v, cellen);
       staat.cache.delete(rij.week.bestand.id);
       venster.sluit(); document.removeEventListener("keydown", opEscape);
       toon();
@@ -628,6 +687,22 @@ function openBewerker(rij) {
       }
     }
   });
+
+  // IDEM: inhoud van de vorige les overnemen (therapieregels van die dag niet)
+  let idemBalk = null;
+  if (rij.idem && rij.idemVan) {
+    const wanneer = datumTekst(rij.idemVan.datum, { weekday: "short", day: "numeric", month: "short" });
+    idemBalk = h("div", { class: "melding info" }, "Deze les staat op IDEM (zoals " + wanneer + "). ",
+      h("button", { type: "button", class: "knop klein", onclick: () => {
+        const bv = B.rijNaarVelden(rij.idemVan.rij);
+        const zonderTherapie = (t) => t.split("\n").filter(l => !/^\s*(?:[-–•]\s+)?🟢/u.test(l)).join("\n");
+        v.onderwerp = bv.onderwerp; v.doelen = bv.doelen; v.verloop = zonderTherapie(bv.verloop);
+        v.hadDoelen = true; v.hadVerloop = true;
+        if (rij.materiaalIdem) v.materiaal = bv.materiaal;
+        onderwerpVeld.value = v.onderwerp; doelenVeld.value = v.doelen; verloopVeld.value = v.verloop; materiaalVeld.value = v.materiaal;
+        ververs(); idemBalk.remove();
+      } }, "↺ Inhoud van " + wanneer + " overnemen"));
+  }
 
   const datumTekstDag = rij.dagTitel ? rij.dagTitel.charAt(0) + rij.dagTitel.slice(1).toLowerCase() : "";
   const formulier = h("div", { class: "formulier" },
@@ -647,7 +722,7 @@ function openBewerker(rij) {
     h("header", { class: "venster-kop" },
       h("div", {}, h("h2", {}, "Lesuur bewerken"), h("div", { class: "klein" }, datumTekstDag + " · " + rij.uur)),
       h("div", { class: "knoppen" }, annuleerKnop, opslaanKnop)),
-    melding,
+    melding, idemBalk,
     h("div", { class: "bewerker" }, formulier, h("div", {}, h("h4", { class: "klein" }, "Voorbeeld"), voorbeeld))
   ]);
   ververs();

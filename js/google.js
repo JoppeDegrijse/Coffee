@@ -1,6 +1,6 @@
 // Coffee! – aanmelden bij Google en praten met Drive en Docs.
 import { verzamelDagen, verzamelDagenDocx, gezieneKleuren, WEEKDAGEN } from "./parser.js";
-import { celVerzoeken } from "./bewerken.js";
+import { celVerzoeken, veldenNaarRegels } from "./bewerken.js";
 
 const SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/documents"];
 export const MAP_TYPE = "application/vnd.google-apps.folder";
@@ -175,9 +175,22 @@ function laadScript(src) {
 const postJson = (url, body) => json(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const DOCS = "https://docs.googleapis.com/v1/documents/";
 
-// Schrijft gewijzigde cellen van één lesuur terug. plaats = { dagIndex, rijIndex }, verwacht = rij.bron.tekst
-// regels = { vak?, inhoud?, materiaal? } (enkel de gewijzigde cellen)
-export async function schrijfLes(bestand, plaats, verwacht, regels) {
+// Schrijft gewijzigde cellen van één lesuur terug. plaats = { dagIndex, rijIndex }, verwacht = rij.bron.tekst,
+// velden = invulvelden, cellen = welke cellen ("vak", "inhoud", "materiaal")
+export async function schrijfLes(bestand, plaats, verwacht, velden, cellen) {
+  try {
+    await schrijfLesMet(bestand, plaats, verwacht, velden, cellen, true);
+  } catch (e) {
+    // lukt een Drive-chip niet (bv. geen toegang tot dat bestand), dan als gewone link
+    if (e instanceof ConflictFout || e instanceof AanmeldFout || e.status !== 400) throw e;
+    await schrijfLesMet(bestand, plaats, verwacht, velden, cellen, false);
+  }
+}
+
+async function schrijfLesMet(bestand, plaats, verwacht, velden, gekozen, chips) {
+  const alle = veldenNaarRegels(velden, { chips });
+  const regels = {};
+  gekozen.forEach(k => { regels[k] = alle[k]; });
   const doc = await json(DOCS + bestand.id);
   const dagen = verzamelDagen(doc);
   const dag = dagen[plaats.dagIndex];
@@ -195,10 +208,11 @@ export async function schrijfLes(bestand, plaats, verwacht, regels) {
 // ---------- Drive doorzoeken (voor @-koppelingen) ----------
 export async function zoekBestanden(term) {
   const veilig = term.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  // enkel je eigen Drive (niet de gedeelde drives van school)
   const params = new URLSearchParams({
-    q: "name contains '" + veilig + "' and trashed = false and mimeType != '" + MAP_TYPE + "'",
+    q: "name contains '" + veilig + "' and 'me' in owners and trashed = false and mimeType != '" + MAP_TYPE + "'",
     pageSize: "15", fields: "files(id,name,mimeType,webViewLink,iconLink,modifiedTime)",
-    supportsAllDrives: "true", includeItemsFromAllDrives: "true", corpora: "allDrives"
+    corpora: "user", includeItemsFromAllDrives: "false", supportsAllDrives: "true"
   });
   const res = await json(DRIVE + "files?" + params);
   return (res.files || []).sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime));
@@ -237,4 +251,11 @@ export async function maakNieuweWeek(mapId, maandag, sjabloon) {
   }
   if (requests.length) await postJson(DOCS + kopie.id + ":batchUpdate", { requests });
   return Object.assign(kopie, { map: maandMap.name, mapId: maandMap.id });
+}
+
+// Naam van een Drive-bestand uit een geplakte link (null als het geen Drive-link is of niet lukt)
+export async function driveNaam(url) {
+  const m = url.match(/\/d\/([\w-]{10,})/) || url.match(/[?&]id=([\w-]{10,})/) || url.match(/folders\/([\w-]{10,})/);
+  if (!m) return null;
+  try { return (await json(DRIVE + "files/" + m[1] + "?fields=name&supportsAllDrives=true")).name; } catch (e) { return null; }
 }

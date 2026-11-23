@@ -60,9 +60,16 @@ export function rijNaarVelden(rij) {
 // ---------- Van velden naar regels ----------
 // regel = { text, bold:[[s,e]], underline:[[s,e]], kleur, links:[{s,e,url}], opsomming }
 
-// "[tekst](url)" en losse URL's → platte tekst + linkposities
-function ontleedLinks(md, verschuiving = 0) {
+// Is dit een link naar een Google Drive-bestand of -map? (die worden in Google Docs een chip)
+export function isDriveLink(url) {
+  return /^https:\/\/(docs\.google\.com\/(document|spreadsheets|presentation|forms|drawings)\/d\/|drive\.google\.com\/(file\/d\/|drive\/(u\/\d+\/)?folders\/|open\?id=))/.test(url);
+}
+
+// "[tekst](url)" en losse URL's → platte tekst + linkposities.
+// Met chips = true komen Drive-links niet als tekst in de lijn, maar als chip (positie in 'chips').
+function ontleedLinks(md, verschuiving = 0, chips = false) {
   const links = [];
+  const chipLijst = [];
   let tekst = "";
   const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|https?:\/\/[^\s)]+/g;
   let laatste = 0, m;
@@ -70,15 +77,19 @@ function ontleedLinks(md, verschuiving = 0) {
     tekst += md.slice(laatste, m.index);
     const zicht = m[1] != null ? m[1] : m[0];
     const url = m[1] != null ? m[2] : m[0];
-    links.push({ s: verschuiving + tekst.length, e: verschuiving + tekst.length + zicht.length, url });
-    tekst += zicht;
+    if (chips && isDriveLink(url)) {
+      chipLijst.push({ pos: verschuiving + tekst.length, url });
+    } else {
+      links.push({ s: verschuiving + tekst.length, e: verschuiving + tekst.length + zicht.length, url });
+      tekst += zicht;
+    }
     laatste = m.index + m[0].length;
   }
   tekst += md.slice(laatste);
-  return { tekst, links };
+  return { tekst, links, chips: chipLijst };
 }
 
-export function lijnNaarRegel(lijn) {
+export function lijnNaarRegel(lijn, { chips = false } = {}) {
   let rest = lijn.replace(/\s+$/, "");
   let opsomming = -1;
   const op = rest.match(/^(\s*)[-–•]\s+(.*)$/);
@@ -88,11 +99,11 @@ export function lijnNaarRegel(lijn) {
   if (rest.startsWith(ROOD)) { kleur = "rood"; rest = rest.slice(ROOD.length).trim(); }
   else if (rest.startsWith(GROEN)) { kleur = "groen"; rest = rest.slice(GROEN.length).trim(); }
   const voorvoegsel = opsomming >= 0 ? "- " : "";
-  const { tekst, links } = ontleedLinks(rest, voorvoegsel.length);
+  const { tekst, links, chips: chipLijst } = ontleedLinks(rest, voorvoegsel.length, chips);
   const text = voorvoegsel + tekst;
   const fase = opsomming < 0 && /^(Inl|Kern|Slot)\.?$/i.test(tekst);
   return {
-    text, bold: [], underline: fase ? [[0, text.length]] : [], kleur, kleurStart: voorvoegsel.length, links, opsomming,
+    text, bold: [], underline: fase ? [[0, text.length]] : [], kleur, kleurStart: voorvoegsel.length, links, chips: chipLijst, opsomming,
     // voor het voorbeeld
     md: rest, niveau: opsomming, platteTekst: tekst
   };
@@ -100,10 +111,12 @@ export function lijnNaarRegel(lijn) {
 
 const lijnen = (s) => (s || "").split("\n");
 
-export function veldenNaarRegels(v) {
+export function veldenNaarRegels(v, { chips = false } = {}) {
   const inhoud = [];
-  const label = { text: LABEL + (v.onderwerp.trim() ? " " + ontleedLinks(v.onderwerp.trim()).tekst : ""), bold: [[0, LABEL.length]],
-                  underline: [], kleur: null, links: ontleedLinks(v.onderwerp.trim(), LABEL.length + 1).links, opsomming: -1 };
+  const lijnNaarRegel_ = (l) => lijnNaarRegel(l, { chips });
+  const ond = ontleedLinks(v.onderwerp.trim(), LABEL.length + 1, chips);
+  const label = { text: LABEL + (v.onderwerp.trim() ? " " + ond.tekst : ""), bold: [[0, LABEL.length]],
+                  underline: [], kleur: null, links: ond.links, chips: ond.chips, opsomming: -1 };
   inhoud.push(label);
   const leeg = () => ({ text: "", bold: [], underline: [], kleur: null, links: [], opsomming: -1 });
   const kop = (t) => ({ text: t, bold: [[0, t.length]], underline: [], kleur: null, links: [], opsomming: -1 });
@@ -111,16 +124,16 @@ export function veldenNaarRegels(v) {
   const verloop = trimLeeg(lijnen(v.verloop));
   if (doelen.length || v.hadDoelen) {
     inhoud.push(leeg(), kop("Doelen:"));
-    doelen.forEach(l => inhoud.push(l.trim() ? lijnNaarRegel(l) : leeg()));
+    doelen.forEach(l => inhoud.push(l.trim() ? lijnNaarRegel_(l) : leeg()));
   }
   if (verloop.length || v.hadVerloop) {
     inhoud.push(leeg(), kop("Verloop:"));
-    verloop.forEach(l => inhoud.push(l.trim() ? lijnNaarRegel(l) : leeg()));
+    verloop.forEach(l => inhoud.push(l.trim() ? lijnNaarRegel_(l) : leeg()));
   }
   return {
     vak: [{ text: v.vak.trim(), bold: [], underline: [], kleur: null, links: [], opsomming: -1 }],
     inhoud,
-    materiaal: trimLeeg(lijnen(v.materiaal)).map(l => l.trim() ? lijnNaarRegel(l) : leeg())
+    materiaal: trimLeeg(lijnen(v.materiaal)).map(l => l.trim() ? lijnNaarRegel_(l) : leeg())
   };
 }
 
@@ -148,12 +161,14 @@ export function celVerzoeken(bereik, regels, { stijlHerstellen = true, kleuren =
   if (!stijlHerstellen) return reqs;
 
   const tEind = start + T.length;
-  reqs.push({ updateParagraphStyle: { range: r(start, tEind + 1), paragraphStyle: {}, fields: "indentStart,indentFirstLine" } });
+  // inspringing weg en links uitlijnen (ook als de oude inhoud gecentreerd stond)
+  reqs.push({ updateParagraphStyle: { range: r(start, tEind + 1), paragraphStyle: { alignment: "START" }, fields: "indentStart,indentFirstLine,alignment" } });
   // ook het laatste regeleinde van de cel, zodat er geen oude link of kleur aan blijft hangen
   reqs.push({ updateTextStyle: { range: r(start, tEind + 1), textStyle: {},
     fields: "bold,italic,underline,strikethrough,foregroundColor,link" } });
 
   let pos = start;
+  const chipPosities = [];
   for (const regel of regels) {
     const n = regel.text.length;
     if (n) {
@@ -176,8 +191,12 @@ export function celVerzoeken(bereik, regels, { stijlHerstellen = true, kleuren =
         paragraphStyle: { indentStart: { magnitude: inspringing, unit: "PT" }, indentFirstLine: { magnitude: inspringing - 10, unit: "PT" } },
         fields: "indentStart,indentFirstLine" } });
     }
+    for (const c of regel.chips || []) chipPosities.push({ index: pos + c.pos, url: c.url });
     pos += n + 1;
   }
+  // Drive-chips als laatste, van achter naar voor (elke chip neemt één positie in)
+  chipPosities.sort((a, b) => b.index - a.index);
+  for (const c of chipPosities) reqs.push({ insertRichLink: { location: { index: c.index }, richLinkProperties: { uri: c.url } } });
   return reqs;
 }
 

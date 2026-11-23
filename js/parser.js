@@ -1,15 +1,22 @@
 // Coffee! – leest een weekagenda (Google Docs of Word) en zet ze om naar dagen en lesuren.
 //
 // Resultaat: [{ titel, weekdag, rijen: [rij] }]
-// rij (les):   { soort:"les",  start, eind, uur, vak, onderwerp, doelen[], regels[], materiaal[], groen[], rood[], links[] }
+// rij (les):   { soort:"les", start, eind, uur, vak, onderwerp, doelen[], regels[], materiaal[], materiaalRegels[],
+//                groen[], rood[], links[], bron? }
 // rij (blok):  { soort:"blok"|"perm"|"vrij", start, eind, uur, titel, halfP, bewaking, regels[], groen[], rood[], links[] }
 //               perm = permanentie (P of ½ P), vrij = LO (niet op school), bewaking = rode "bewaking" in het blok
-// start/eind = minuten sinds middernacht (of null). regels = [{ tekst, niveau }] (niveau -1 = gewone tekst).
+// regels = [{ tekst, md, niveau, kleur }]  md = tekst met links als [tekst](url); niveau -1 = gewone tekst;
+//          kleur = "groen" | "rood" | null
+// bron (enkel Google Docs) = { vak, inhoud, materiaal }: { start, end } van elke cel, + tekst om wijzigingen te detecteren.
 
 export const WEEKDAGEN = ["MAANDAG", "DINSDAG", "WOENSDAG", "DONDERDAG", "VRIJDAG", "ZATERDAG", "ZONDAG"];
 const DAGEN = /^(MAANDAG|DINSDAG|WOENSDAG|DONDERDAG|VRIJDAG|ZATERDAG|ZONDAG)\b/i;
 const W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const STREEPJE = /^\s*[-–•]\s+/;
+
+// Kleuren zoals ze in het document gebruikt worden (om bij het terugschrijven dezelfde te gebruiken)
+export const gezieneKleuren = { groen: null, rood: null };
 
 // ---------- Kleuren ----------
 function kleurUitRGB(r, g, b) {
@@ -19,7 +26,10 @@ function kleurUitRGB(r, g, b) {
 }
 function kleurSoort(style) {
   const c = style && style.foregroundColor && style.foregroundColor.color && style.foregroundColor.color.rgbColor;
-  return c ? kleurUitRGB(c.red || 0, c.green || 0, c.blue || 0) : null;
+  if (!c) return null;
+  const k = kleurUitRGB(c.red || 0, c.green || 0, c.blue || 0);
+  if (k && !gezieneKleuren[k]) gezieneKleuren[k] = { red: c.red || 0, green: c.green || 0, blue: c.blue || 0 };
+  return k;
 }
 function kleurUitHex(hex) {
   if (!hex || !/^[0-9a-f]{6}$/i.test(hex)) return null;
@@ -28,19 +38,28 @@ function kleurUitHex(hex) {
 }
 
 // ---------- Gemeenschappelijk ----------
-// regels = [{ tekst, niveau, kleur: { groen, rood } }]
-function maakCelInhoud(regels, links) {
-  const gekleurd = (k) => regels.map(r => (r.kleur[k] || "").replace(/\s+/g, " ").trim()).filter(Boolean);
-  // lege regels aan begin/einde weg
-  const schoon = regels.map(r => ({ tekst: r.tekst.replace(/\s+$/, ""), niveau: r.niveau }));
-  while (schoon.length && !schoon[0].tekst.trim()) schoon.shift();
-  while (schoon.length && !schoon[schoon.length - 1].tekst.trim()) schoon.pop();
+// ruw = [{ tekst, md, niveau, kleurTekst: { groen, rood }, inspringing }]
+function maakCelInhoud(ruw, links, bereik) {
+  const gekleurd = (k) => ruw.map(r => (r.kleurTekst[k] || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+  const regels = ruw.map(r => {
+    let tekst = r.tekst.replace(/\s+$/, ""), md = r.md.replace(/\s+$/, ""), niveau = r.niveau;
+    // streepje als gewone tekst ("- iets") = opsomming
+    if (niveau < 0 && STREEPJE.test(tekst)) {
+      tekst = tekst.replace(STREEPJE, ""); md = md.replace(STREEPJE, "");
+      niveau = r.inspringing >= 30 ? 1 : 0;
+    }
+    const kleur = (r.kleurTekst.rood || "").trim() ? "rood" : (r.kleurTekst.groen || "").trim() ? "groen" : null;
+    return { tekst, md, niveau, kleur };
+  });
+  while (regels.length && !regels[0].tekst.trim()) regels.shift();
+  while (regels.length && !regels[regels.length - 1].tekst.trim()) regels.pop();
   return {
-    tekst: regels.map(r => r.tekst).join("\n").trim(),
-    regels: schoon,
+    tekst: ruw.map(r => r.tekst).join("\n").trim(),
+    regels,
     groen: gekleurd("groen"),
     rood: gekleurd("rood"),
-    links: [...new Set(links)]
+    links: [...new Set(links)],
+    bereik: bereik || null
   };
 }
 
@@ -56,7 +75,7 @@ export function leesUren(tekst) {
   };
 }
 
-const LEEG = { tekst: "", regels: [], groen: [], rood: [], links: [] };
+const LEEG = { tekst: "", regels: [], groen: [], rood: [], links: [], bereik: null };
 
 // rijen = [[{ span, inhoud }]]
 function verwerkDagtabel(rijen, dag) {
@@ -80,21 +99,30 @@ function verwerkDagtabel(rijen, dag) {
                        halfP, bewaking: c.rood.some(r => /bewak/i.test(r)),
                        regels: c.regels.slice(1), groen: c.groen, rood: c.rood, links: c.links });
     } else {
-      const vak = cellen[1].inhoud.tekst.replace(/-\s*\n\s*/g, "").replace(/\s+/g, " ").trim();
+      const vakCel = cellen[1].inhoud;
+      const vak = vakCel.tekst.replace(/-\s*\n\s*/g, "").replace(/\s+/g, " ").trim();
       const inhoud = cellen[2] ? cellen[2].inhoud : LEEG;
       const materiaal = cellen[3] ? cellen[3].inhoud : LEEG;
       const m = inhoud.tekst.match(/Lesonderwerp:[ \t]*([^\n]*)/i);
       const onderwerp = (m ? m[1] : (inhoud.tekst.split("\n").find(l => l.trim()) || "")).trim();
       const dm = inhoud.tekst.match(/Doelen:[ \t]*([\s\S]*?)(?:\n\s*Verloop:|$)/i);
       const doelen = dm ? dm[1].split("\n").map(x => x.trim()).filter(Boolean) : [];
-      dag.rijen.push({
+      const rij = {
         soort: "les", ...tijd, vak, onderwerp, doelen,
         regels: inhoud.regels,
-        materiaal: materiaal.regels.map(r => r.tekst.trim()).filter(Boolean),
+        materiaalRegels: materiaal.regels,
+        materiaal: materiaal.regels.map(r => r.md.trim()).filter(Boolean),
         groen: inhoud.groen.concat(materiaal.groen),
         rood: inhoud.rood.concat(materiaal.rood),
         links: [...new Set(inhoud.links.concat(materiaal.links))]
-      });
+      };
+      if (vakCel.bereik && inhoud.bereik && materiaal.bereik) {
+        rij.bron = {
+          vak: vakCel.bereik, inhoud: inhoud.bereik, materiaal: materiaal.bereik,
+          tekst: [vakCel.tekst, inhoud.tekst, materiaal.tekst].join("␞")
+        };
+      }
+      dag.rijen.push(rij);
     }
   }
   return true;
@@ -118,37 +146,58 @@ function vulEindtijden(dagen) {
   return dagen;
 }
 
+// Voegt opeenvolgende stukken met dezelfde link samen tot [tekst](url)
+function mdToevoegen(md, stuk, url, vorigeUrl) {
+  if (!url) return md + stuk;
+  const schoon = stuk.replace(/\n$/, "");
+  const einde = stuk.endsWith("\n") ? "\n" : "";
+  const staart = "](" + url + ")";
+  if (url === vorigeUrl && md.endsWith(staart)) return md.slice(0, -staart.length) + schoon + staart + einde;
+  return md + "[" + schoon + staart + einde;
+}
+
 // ---------- Google Docs (Docs API) ----------
 function leesCel(cel) {
-  const regels = [];
+  const ruw = [];
   const links = [];
   (function loop(content) {
     for (const el of content || []) {
       if (el.paragraph) {
-        let tekst = "";
-        const kleur = {};
+        let tekst = "", md = "", vorigeUrl = null;
+        const kleurTekst = {};
         for (const pe of el.paragraph.elements || []) {
           const tr = pe.textRun;
           if (tr) {
+            // een link op enkel witruimte (bv. het regeleinde) telt niet
+            const url = tr.content.trim() ? (tr.textStyle && tr.textStyle.link && tr.textStyle.link.url) : null;
             tekst += tr.content;
+            md = mdToevoegen(md, tr.content, url, vorigeUrl);
+            vorigeUrl = url || null;
             const k = kleurSoort(tr.textStyle);
-            if (k) kleur[k] = (kleur[k] || "") + tr.content;
-            if (tr.textStyle && tr.textStyle.link && tr.textStyle.link.url) links.push(tr.textStyle.link.url);
+            if (k) kleurTekst[k] = (kleurTekst[k] || "") + tr.content;
+            if (url) links.push(url);
           }
           if (pe.richLink && pe.richLink.richLinkProperties) {
             const rp = pe.richLink.richLinkProperties;
             tekst += rp.title || "";
+            md += rp.uri ? "[" + (rp.title || "link") + "](" + rp.uri + ")" : (rp.title || "");
             if (rp.uri) links.push(rp.uri);
+            vorigeUrl = null;
           }
         }
+        const ps = el.paragraph.paragraphStyle || {};
+        const inspringing = (ps.indentStart && ps.indentStart.magnitude) || 0;
         const niveau = el.paragraph.bullet ? (el.paragraph.bullet.nestingLevel || 0) : -1;
-        regels.push({ tekst: tekst.replace(/\n$/, ""), niveau, kleur });
+        ruw.push({ tekst: tekst.replace(/\n$/, ""), md: md.replace(/\n$/, ""), niveau, kleurTekst, inspringing });
       } else if (el.table) {
         for (const rij of el.table.tableRows || []) for (const c of rij.tableCells || []) loop(c.content);
       }
     }
   })(cel.content);
-  return maakCelInhoud(regels, links);
+  const inhoud = cel.content || [];
+  const bereik = inhoud.length && inhoud[0].startIndex != null
+    ? { start: inhoud[0].startIndex, end: inhoud[inhoud.length - 1].endIndex } : null;
+  return maakCelInhoud(ruw, links, bereik);
 }
 
 export function verzamelDagen(doc) {
@@ -189,17 +238,22 @@ const wAttr = (el, naam) => el ? (el.getAttributeNS(W_NS, naam) || el.getAttribu
 const VERPAKKING = new Set(["sdt", "sdtContent", "customXml", "smartTag", "ins"]);
 
 function docxParagraaf(p, rels) {
-  let tekst = "";
-  const kleur = {};
+  let tekst = "", md = "";
+  const kleurTekst = {};
   const links = [];
+  let inLink = false;
   (function loop(el) {
     for (const n of Array.from(el.childNodes)) {
       if (n.nodeType !== 1) continue;
       const naam = n.localName;
       if (naam === "hyperlink") {
         const rid = n.getAttributeNS(R_NS, "id") || n.getAttribute("r:id");
-        if (rid && rels[rid]) links.push(rels[rid]);
-        loop(n);
+        const url = rid && rels[rid];
+        if (url) links.push(url);
+        const voor = tekst.length, wasInLink = inLink;
+        inLink = true; loop(n); inLink = wasInLink;
+        const stuk = tekst.slice(voor);
+        if (!inLink) md += url ? "[" + stuk + "](" + url + ")" : stuk;
       } else if (naam === "r") {
         let runTekst = "";
         for (const c of Array.from(n.childNodes)) {
@@ -215,8 +269,9 @@ function docxParagraaf(p, rels) {
         const rPr = kinderen(n, "rPr")[0];
         const kleurEl = rPr && kinderen(rPr, "color")[0];
         const k = kleurUitHex(wAttr(kleurEl, "val"));
-        if (k) kleur[k] = (kleur[k] || "") + runTekst;
+        if (k) kleurTekst[k] = (kleurTekst[k] || "") + runTekst;
         tekst += runTekst;
+        if (!inLink) md += runTekst;
       } else if (naam === "fldSimple") {
         const m = (wAttr(n, "instr") || "").match(/HYPERLINK\s+"([^"]+)"/);
         if (m) links.push(m[1]);
@@ -230,7 +285,7 @@ function docxParagraaf(p, rels) {
   const numPr = pPr && kinderen(pPr, "numPr")[0];
   const ilvl = numPr && kinderen(numPr, "ilvl")[0];
   const niveau = numPr ? parseInt(wAttr(ilvl, "val") || "0", 10) : -1;
-  return { tekst, kleur, links, niveau };
+  return { tekst, md, kleurTekst, links, niveau, inspringing: 0 };
 }
 
 function docxLoop(el, naam, cb) {
@@ -242,14 +297,14 @@ function docxLoop(el, naam, cb) {
 }
 
 function docxCel(tc, rels) {
-  const regels = [];
+  const ruw = [];
   const links = [];
   (function loop(el) {
     for (const n of Array.from(el.childNodes)) {
       if (n.nodeType !== 1 || n.namespaceURI !== W_NS) continue;
       if (n.localName === "p") {
         const r = docxParagraaf(n, rels);
-        regels.push({ tekst: r.tekst, niveau: r.niveau, kleur: r.kleur });
+        ruw.push(r);
         links.push(...r.links);
       } else if (n.localName === "tbl") {
         docxLoop(n, "tr", tr => docxLoop(tr, "tc", loop));
@@ -258,7 +313,7 @@ function docxCel(tc, rels) {
       }
     }
   })(tc);
-  return maakCelInhoud(regels, links);
+  return maakCelInhoud(ruw, links, null);
 }
 
 export function verzamelDagenDocx(documentXml, relsXml) {

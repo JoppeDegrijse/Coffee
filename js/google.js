@@ -1,5 +1,6 @@
 // Coffee! – aanmelden bij Google en praten met Drive en Docs.
-import { verzamelDagen, verzamelDagenDocx } from "./parser.js";
+import { verzamelDagen, verzamelDagenDocx, gezieneKleuren, WEEKDAGEN } from "./parser.js";
+import { celVerzoeken } from "./bewerken.js";
 
 const SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/documents"];
 export const MAP_TYPE = "application/vnd.google-apps.folder";
@@ -12,6 +13,7 @@ let token = null;          // { access_token, verloopt }
 let wachtend = null;       // { resolve, reject }
 
 export class AanmeldFout extends Error {}
+export class ConflictFout extends Error {}
 
 // ---------- Aanmelden ----------
 function wachtOpGoogle() {
@@ -167,4 +169,72 @@ function laadScript(src) {
     s.src = src; s.onload = resolve; s.onerror = () => reject(new Error("Kon " + src + " niet laden"));
     document.head.appendChild(s);
   });
+}
+
+// ---------- Schrijven ----------
+const postJson = (url, body) => json(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const DOCS = "https://docs.googleapis.com/v1/documents/";
+
+// Schrijft gewijzigde cellen van één lesuur terug. plaats = { dagIndex, rijIndex }, verwacht = rij.bron.tekst
+// regels = { vak?, inhoud?, materiaal? } (enkel de gewijzigde cellen)
+export async function schrijfLes(bestand, plaats, verwacht, regels) {
+  const doc = await json(DOCS + bestand.id);
+  const dagen = verzamelDagen(doc);
+  const dag = dagen[plaats.dagIndex];
+  const rij = dag && dag.rijen[plaats.rijIndex];
+  if (!rij || !rij.bron || rij.bron.tekst !== verwacht) {
+    throw new ConflictFout("Dit lesuur werd intussen in Google Docs aangepast.");
+  }
+  // van achter naar voor, zodat de posities van eerdere cellen kloppen
+  const cellen = ["vak", "inhoud", "materiaal"].filter(k => regels[k]).sort((a, b) => rij.bron[b].start - rij.bron[a].start);
+  const requests = cellen.flatMap(k => celVerzoeken(rij.bron[k], regels[k], { stijlHerstellen: k !== "vak", kleuren: gezieneKleuren }));
+  if (!requests.length) return;
+  await postJson(DOCS + bestand.id + ":batchUpdate", { requests, writeControl: { requiredRevisionId: doc.revisionId } });
+}
+
+// ---------- Drive doorzoeken (voor @-koppelingen) ----------
+export async function zoekBestanden(term) {
+  const veilig = term.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  const params = new URLSearchParams({
+    q: "name contains '" + veilig + "' and trashed = false and mimeType != '" + MAP_TYPE + "'",
+    pageSize: "15", fields: "files(id,name,mimeType,webViewLink,iconLink,modifiedTime)",
+    supportsAllDrives: "true", includeItemsFromAllDrives: "true", corpora: "allDrives"
+  });
+  const res = await json(DRIVE + "files?" + params);
+  return (res.files || []).sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime));
+}
+
+// ---------- Nieuwe week uit het sjabloon ----------
+const MAANDNAMEN = ["januari", "februari", "maart", "april", "mei", "juni", "juli", "augustus", "september", "oktober", "november", "december"];
+
+export async function maakNieuweWeek(mapId, maandag, sjabloon) {
+  const maand = MAANDNAMEN[maandag.getMonth()];
+  const naam = "Week " + maandag.getDate() + " " + maand;
+  // maandmap zoeken of aanmaken (zelfde schrijfwijze als de bestaande mappen)
+  const mappen = await submappen(mapId);
+  let maandMap = mappen.find(m => m.name.toLowerCase().includes(maand));
+  if (!maandMap) {
+    const hoofdletter = mappen.some(m => /^[A-Z]/.test(m.name)) && !mappen.some(m => /^[a-z]/.test(m.name));
+    const mapNaam = hoofdletter ? maand.charAt(0).toUpperCase() + maand.slice(1) : maand;
+    maandMap = await postJson(DRIVE + "files?supportsAllDrives=true&fields=id,name",
+      { name: mapNaam, mimeType: MAP_TYPE, parents: [mapId] });
+  }
+  // bestaat de week al?
+  const bestaand = await lijstAlles("'" + maandMap.id + "' in parents and trashed = false", "id,name");
+  if (bestaand.some(b => b.name.trim().toLowerCase() === naam.toLowerCase())) {
+    throw new Error("\"" + naam + "\" bestaat al in de map " + maandMap.name + ".");
+  }
+  const kopie = await postJson(DRIVE + "files/" + sjabloon.id + "/copy?supportsAllDrives=true&fields=id,name,mimeType,modifiedTime,webViewLink",
+    { name: naam, mimeType: DOC_TYPE, parents: [maandMap.id] });
+  // dagtitels invullen: "MAANDAG 1 OKTOBER" → "MAANDAG 30 NOVEMBER"
+  const doc = await json(DOCS + kopie.id);
+  const requests = [];
+  for (const dag of verzamelDagen(doc)) {
+    if (dag.weekdag < 0) continue;
+    const datum = new Date(maandag); datum.setDate(datum.getDate() + dag.weekdag);
+    const nieuw = WEEKDAGEN[dag.weekdag] + " " + datum.getDate() + " " + MAANDNAMEN[datum.getMonth()].toUpperCase();
+    if (dag.titel !== nieuw) requests.push({ replaceAllText: { containsText: { text: dag.titel, matchCase: true }, replaceText: nieuw } });
+  }
+  if (requests.length) await postJson(DOCS + kopie.id + ":batchUpdate", { requests });
+  return Object.assign(kopie, { map: maandMap.name, mapId: maandMap.id });
 }

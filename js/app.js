@@ -1,6 +1,7 @@
 // Coffee! – de app: dashboard "Nu", weekoverzicht en instellingen.
 import * as G from "./google.js";
 import * as W from "./weken.js";
+import * as B from "./bewerken.js";
 
 // ---------- Instellingen (in deze browser) ----------
 const INST_SLEUTEL = "coffee_instellingen";
@@ -63,11 +64,12 @@ function linkLabel(url) {
 // Tekst met klikbare URL's
 function metLinks(tekst) {
   const delen = [];
-  const re = /https?:\/\/[^\s)]+/g;
+  const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|https?:\/\/[^\s)]+/g;
   let laatste = 0, m;
   while ((m = re.exec(tekst))) {
     if (m.index > laatste) delen.push(tekst.slice(laatste, m.index));
-    delen.push(h("a", { href: m[0], target: "_blank", rel: "noopener" }, linkLabel(m[0])));
+    const url = m[1] != null ? m[2] : m[0];
+    delen.push(h("a", { href: url, target: "_blank", rel: "noopener" }, m[1] != null ? m[1] : linkLabel(url)));
     laatste = m.index + m[0].length;
   }
   if (laatste < tekst.length) delen.push(tekst.slice(laatste));
@@ -84,12 +86,19 @@ async function laadWeken() {
     .sort((a, b) => a.maandag - b.maandag || (a.bestand.mimeType === G.DOC_TYPE ? 1 : -1));
   // bij dubbele weken (Word + Google Docs) de Google Docs-versie houden
   staat.weken = staat.weken.filter((w, i, lijst) => !(lijst[i + 1] && lijst[i + 1].maandag.getTime() === w.maandag.getTime()));
+  staat.sjabloon = bestanden.find(b => /sjabloon/i.test(b.name) && b.mimeType === G.DOC_TYPE && b.mapId === staat.inst.map.id)
+    || bestanden.find(b => /sjabloon/i.test(b.name) && b.mimeType === G.DOC_TYPE) || null;
 }
 
 function dagenVan(week) {
   if (!week) return Promise.resolve([]);
   if (!staat.cache.has(week.bestand.id)) {
-    const p = G.leesWeekBestand(week.bestand).catch(e => { staat.cache.delete(week.bestand.id); throw e; });
+    const p = G.leesWeekBestand(week.bestand)
+      .then(dagen => {
+        dagen.forEach((d, i) => d.rijen.forEach((r, j) => { r.plaats = { dagIndex: i, rijIndex: j }; r.week = week; r.dagTitel = d.titel; }));
+        return dagen;
+      })
+      .catch(e => { staat.cache.delete(week.bestand.id); throw e; });
     staat.cache.set(week.bestand.id, p);
   }
   return staat.cache.get(week.bestand.id);
@@ -116,7 +125,7 @@ function wekenRond(week, terug) {
 }
 
 // ---------- Weergave: onderdelen ----------
-function vakLabel(vak) { return h("span", { class: "vak" }, vak || "—"); }
+function vakLabel(vak) { return vak ? h("span", { class: "vak" }, vak) : h("span", { class: "vak open" }, "+"); }
 
 // Afkortingen voluit in zinnen (WO, SOVA, CREA en LO blijven afgekort)
 const VAKNAMEN = { t: "taal", funct: "functionele taal", funcw: "functionele wiskunde", go: "godsdienst",
@@ -143,7 +152,7 @@ function regelsWeergave(rij) {
   const wrap = h("div", { class: "regels" });
   const gekleurd = rij.groen.concat(rij.rood).filter(Boolean);
   for (const r of rij.regels || []) {
-    let t = r.tekst.replace(/\s+/g, " ").trim();
+    let t = (r.md != null ? r.md : r.tekst).replace(/\s+/g, " ").trim();
     if (/^Lesonderwerp:/i.test(t)) continue;                  // staat al in de titel
     // therapie en herinneringen staan al als label bovenaan: niet herhalen
     let rest = t;
@@ -179,11 +188,13 @@ function materiaalWeergave(rij) {
 }
 
 function lesKaart(rij, opties = {}) {
+  const kanBewerken = !opties.voorbeeld && rij.bron && rij.week && rij.week.bestand.mimeType === G.DOC_TYPE;
   return h("article", { class: "kaart les" + (opties.groot ? " groot" : "") },
     h("header", {},
       h("div", { class: "tijd" }, rij.uur),
       vakLabel(rij.vak),
-      h("h3", {}, rij.onderwerp || "(geen lesonderwerp)")
+      h("h3", { class: rij.onderwerp ? "" : "open" }, rij.onderwerp || "Nog in te vullen"),
+      kanBewerken ? h("button", { class: "knop klein secundair bewerk", onclick: (e) => { e.stopPropagation(); openBewerker(rij); } }, "✏️ Bewerken") : null
     ),
     chips(rij),
     h("div", { class: "lesinhoud" }, regelsWeergave(rij), materiaalWeergave(rij))
@@ -226,7 +237,7 @@ function dagLijst(dag, datum, nuMin) {
   for (const rij of dag.rijen) {
     const bezig = nuMin != null && rij.start != null && nuMin >= rij.start && nuMin < rij.eind;
     const voorbij = nuMin != null && rij.eind != null && nuMin >= rij.eind;
-    const titel = rij.soort === "les" ? (rij.onderwerp || "—") : rij.soort === "vrij" ? "Vrij" : rij.titel;
+    const titel = rij.soort === "les" ? (rij.onderwerp || "Nog in te vullen") : rij.soort === "vrij" ? "Vrij" : rij.titel;
     const det = h("details", { class: "rij " + rijKlasse(rij) + (bezig ? " bezig" : "") + (voorbij ? " voorbij" : "") },
       h("summary", {},
         h("span", { class: "tijd" }, W.tijdTekst(rij.start)),
@@ -378,7 +389,7 @@ async function toonWeek(doel) {
       h("a", { class: "klein", href: week.bestand.webViewLink || "#", target: "_blank", rel: "noopener" }, week.bestand.name + " ↗")),
     h("button", { class: "knop secundair", disabled: staat.weekIndex === staat.weken.length - 1, onclick: () => { staat.weekIndex++; toon(); } }, "→")
   );
-  doel.replaceChildren(navigatie, h("p", { class: "laden" }, "Week wordt geladen…"));
+  doel.replaceChildren(navigatie, nieuweWeekKnop(), h("p", { class: "laden" }, "Week wordt geladen…"));
   const dagen = await dagenVan(week);
   doel.querySelector(".laden").remove();
   const raster = h("div", { class: "weekraster" });
@@ -451,6 +462,232 @@ function toonInstellingen(doel) {
 function lokaal(d) {
   const x = new Date(d);
   return W.isoDatum(x) + "T" + W.tijdTekst(W.minutenVan(x));
+}
+
+// ---------- Bewerken ----------
+const VAKKEN = ["T", "W", "WO", "GO", "SOVA", "PROJ", "Func. T", "Func. W", "Schrift", "Voorlezen", "CREA", "LO"];
+
+// Huidige lijn(en) in een tekstvak aanpassen
+function lijnBereik(el) {
+  const v = el.value;
+  const s = v.lastIndexOf("\n", el.selectionStart - 1) + 1;
+  let e = v.indexOf("\n", el.selectionEnd);
+  if (e < 0) e = v.length;
+  return [s, e];
+}
+function vervangBereik(el, s, e, tekst, cursor) {
+  el.value = el.value.slice(0, s) + tekst + el.value.slice(e);
+  el.focus();
+  const c = cursor != null ? cursor : s + tekst.length;
+  el.setSelectionRange(c, c);
+  el.dispatchEvent(new Event("input"));
+}
+function wisselOpsomming(el) {
+  const [s, e] = lijnBereik(el);
+  const lijnen = el.value.slice(s, e).split("\n");
+  const allemaal = lijnen.every(l => /^\s*[-–•]\s/.test(l) || !l.trim());
+  const nieuw = lijnen.map(l => !l.trim() ? l : allemaal ? l.replace(/^\s*[-–•]\s+/, "") : (/^\s*[-–•]\s/.test(l) ? l : "- " + l));
+  vervangBereik(el, s, e, nieuw.join("\n"));
+}
+function wisselKleur(el, teken) {
+  const [s, e] = lijnBereik(el);
+  const lijnen = el.value.slice(s, e).split("\n").map(l => {
+    if (!l.trim()) return l;
+    const m = l.match(/^(\s*(?:[-–•]\s+)?)(❗ |🟢 )?(.*)$/u);
+    return m[2] === teken + " " ? m[1] + m[3] : m[1] + teken + " " + m[3];
+  });
+  vervangBereik(el, s, e, lijnen.join("\n"));
+}
+function voegLijnToe(el, tekst) {
+  const [, e] = lijnBereik(el);
+  const huidig = el.value.slice(lijnBereik(el)[0], e);
+  const invoeg = (huidig.trim() ? "\n" : "") + tekst;
+  vervangBereik(el, e, e, invoeg + (e === el.value.length ? "\n" : ""), e + invoeg.length + 1);
+}
+function voegInBijCursor(el, tekst, vervangVorig = 0) {
+  const s = el.selectionStart - vervangVorig;
+  vervangBereik(el, s, el.selectionEnd, tekst);
+}
+
+function sluitbaarVenster(inhoud, opties = {}) {
+  const achtergrond = h("div", { class: "venster" + (opties.klein ? " klein" : "") }, h("div", { class: "venster-inhoud" }, inhoud));
+  document.body.appendChild(achtergrond);
+  document.body.classList.add("geen-scroll");
+  const sluit = () => { achtergrond.remove(); if (!document.querySelector(".venster")) document.body.classList.remove("geen-scroll"); };
+  return { sluit, element: achtergrond };
+}
+
+function openDriveZoeker(gekozen) {
+  const veld = h("input", { type: "text", placeholder: "Zoek een bestand in Drive (bv. werkblad breuken)…" });
+  const lijst = h("ul", { class: "zoekresultaten" });
+  const status = h("p", { class: "klein" }, "Typ minstens 2 letters.");
+  let resultaten = [], wacht = null, teller = 0;
+  const kies = (f) => { venster.sluit(); gekozen(f); };
+  const zoek = async () => {
+    const term = veld.value.trim();
+    if (term.length < 2) { lijst.replaceChildren(); status.textContent = "Typ minstens 2 letters."; return; }
+    const mijn = ++teller;
+    status.textContent = "Zoeken…";
+    try {
+      resultaten = await G.zoekBestanden(term);
+      if (mijn !== teller) return;
+      status.textContent = resultaten.length ? "" : "Niets gevonden.";
+      lijst.replaceChildren(...resultaten.map(f => h("li", { onclick: () => kies(f) },
+        f.iconLink ? h("img", { src: f.iconLink, alt: "" }) : null,
+        h("span", {}, f.name),
+        h("span", { class: "klein" }, new Date(f.modifiedTime).toLocaleDateString("nl-BE", { day: "numeric", month: "short", year: "numeric" })))));
+    } catch (e) { status.textContent = "Zoeken mislukt: " + e.message; }
+  };
+  veld.addEventListener("input", () => { clearTimeout(wacht); wacht = setTimeout(zoek, 300); });
+  veld.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && resultaten[0]) { e.preventDefault(); kies(resultaten[0]); }
+    if (e.key === "Escape") { e.stopPropagation(); venster.sluit(); }
+  });
+  const venster = sluitbaarVenster([
+    h("h3", {}, "📎 Drive-bestand koppelen"), veld, status, lijst,
+    h("div", { class: "knoppen" }, h("button", { class: "knop secundair", onclick: () => venster.sluit() }, "Annuleren"))
+  ], { klein: true });
+  setTimeout(() => veld.focus(), 0);
+}
+
+const mdLink = (f) => "[" + f.name.replace(/[\[\]]/g, "") + "](" + f.webViewLink + ")";
+
+function openBewerker(rij) {
+  const origineel = B.rijNaarVelden(rij);
+  const v = { ...origineel };
+  const voorbeeld = h("div", { class: "voorbeeld" });
+  const melding = h("div", { class: "melding" });
+  const zeg = (soort, ...inhoud) => { melding.className = "melding " + soort; melding.replaceChildren(...inhoud); };
+  const ververs = () => voorbeeld.replaceChildren(lesKaart(B.voorbeeldRij(v, rij), { voorbeeld: true }));
+
+  const vakVeld = h("input", { type: "text", list: "vakkenlijst", value: v.vak });
+  vakVeld.addEventListener("input", () => { v.vak = vakVeld.value; ververs(); });
+  const onderwerpVeld = h("input", { type: "text", value: v.onderwerp, placeholder: "bv. VLL kern 7 dag 15: herhaling" });
+  onderwerpVeld.addEventListener("input", () => { v.onderwerp = onderwerpVeld.value; ververs(); });
+
+  const tekstvak = (naam, rijen, plaatshouder) => {
+    const el = h("textarea", { rows: rijen, placeholder: plaatshouder, spellcheck: "true" });
+    el.value = v[naam];
+    el.addEventListener("input", (e) => {
+      v[naam] = el.value; ververs();
+      // @ typen = Drive-bestand koppelen
+      const pos = el.selectionStart;
+      if (e.inputType === "insertText" && e.data === "@" && (pos === 1 || /\s/.test(el.value[pos - 2] || " "))) {
+        openDriveZoeker(f => voegInBijCursor(el, mdLink(f), 1));
+      }
+    });
+    return el;
+  };
+  const doelenVeld = tekstvak("doelen", 3, "Ik kan …  (één doel per lijn)");
+  const verloopVeld = tekstvak("verloop", 12, "Inl\n- …\nKern\n- …\nSlot\n- …");
+  const materiaalVeld = tekstvak("materiaal", 5, "- werkbundel\n- @ om een Drive-bestand te koppelen");
+
+  const knop = (tekst, titel, actie) => h("button", { type: "button", class: "knop klein secundair", title: titel, onclick: actie }, tekst);
+  const werkbalk = (el, extra) => h("div", { class: "werkbalk" },
+    extra || [],
+    knop("– opsomming", "Opsomming aan/uit voor de huidige lijn(en)", () => wisselOpsomming(el)),
+    knop("❗ rood", "Rode herinnering aan/uit", () => wisselKleur(el, "❗")),
+    knop("🟢 therapie", "Groene regel (therapie) aan/uit", () => wisselKleur(el, "🟢")),
+    knop("📎 Drive", "Drive-bestand koppelen (of typ @)", () => openDriveZoeker(f => voegInBijCursor(el, mdLink(f)))));
+
+  const opslaanKnop = h("button", { class: "knop" }, "Opslaan in Google Docs");
+  let wegGooienGevraagd = false;
+  const annuleerKnop = h("button", { class: "knop secundair" }, "Annuleren");
+  const probeerSluiten = () => {
+    if (B.gewijzigdeCellen(origineel, v).length && !wegGooienGevraagd) {
+      wegGooienGevraagd = true; annuleerKnop.textContent = "Wijzigingen weggooien?"; return;
+    }
+    venster.sluit(); document.removeEventListener("keydown", opEscape);
+  };
+  const opEscape = (e) => { if (e.key === "Escape" && !document.querySelector(".venster.klein")) probeerSluiten(); };
+  document.addEventListener("keydown", opEscape);
+  annuleerKnop.addEventListener("click", probeerSluiten);
+
+  opslaanKnop.addEventListener("click", async () => {
+    const cellen = B.gewijzigdeCellen(origineel, v);
+    if (!cellen.length) { venster.sluit(); document.removeEventListener("keydown", opEscape); return; }
+    const alle = B.veldenNaarRegels(v);
+    const regels = {};
+    cellen.forEach(k => { regels[k] = alle[k]; });
+    opslaanKnop.disabled = true; opslaanKnop.textContent = "Bezig met opslaan…";
+    try {
+      await G.schrijfLes(rij.week.bestand, rij.plaats, rij.bron.tekst, regels);
+      staat.cache.delete(rij.week.bestand.id);
+      venster.sluit(); document.removeEventListener("keydown", opEscape);
+      toon();
+    } catch (e) {
+      opslaanKnop.disabled = false; opslaanKnop.textContent = "Opslaan in Google Docs";
+      if (e instanceof G.ConflictFout) {
+        zeg("fout", e.message + " Je wijzigingen zijn niet opgeslagen. Kopieer ze eventueel, en herlaad daarna. ",
+          h("button", { class: "knop klein", onclick: () => { staat.cache.delete(rij.week.bestand.id); venster.sluit(); document.removeEventListener("keydown", opEscape); toon(); } }, "Herladen"));
+      } else if (e instanceof G.AanmeldFout) {
+        zeg("fout", "Je aanmelding is verlopen. Verbind opnieuw en klik daarna nog eens op Opslaan. Je wijzigingen blijven staan. ",
+          h("button", { class: "knop klein", onclick: async () => { try { await G.meldAan(); zeg("ok", "Verbonden. Klik nu op Opslaan."); } catch (x) { zeg("fout", x.message); } } }, "Opnieuw verbinden"));
+      } else {
+        zeg("fout", "Opslaan mislukt: " + (e.message || e));
+      }
+    }
+  });
+
+  const datumTekstDag = rij.dagTitel ? rij.dagTitel.charAt(0) + rij.dagTitel.slice(1).toLowerCase() : "";
+  const formulier = h("div", { class: "formulier" },
+    h("div", { class: "rij-velden" },
+      h("div", { class: "veld smal" }, h("label", {}, "Vak"), vakVeld,
+        h("datalist", { id: "vakkenlijst" }, VAKKEN.map(x => h("option", { value: x })))),
+      h("div", { class: "veld" }, h("label", {}, "Lesonderwerp"), onderwerpVeld)),
+    h("div", { class: "veld" }, h("label", {}, "Doelen"), doelenVeld),
+    h("div", { class: "veld" }, h("label", {}, "Verloop"),
+      werkbalk(verloopVeld, ["Inl", "Kern", "Slot"].map(f => knop(f, "Kopje " + f + " toevoegen", () => voegLijnToe(verloopVeld, f + "\n- ")))),
+      verloopVeld),
+    h("div", { class: "veld" }, h("label", {}, "Materiaal"), werkbalk(materiaalVeld), materiaalVeld),
+    h("p", { class: "klein" }, "Tip: typ @ om een werkblad of ander bestand uit je Drive te koppelen.")
+  );
+
+  const venster = sluitbaarVenster([
+    h("header", { class: "venster-kop" },
+      h("div", {}, h("h2", {}, "Lesuur bewerken"), h("div", { class: "klein" }, datumTekstDag + " · " + rij.uur)),
+      h("div", { class: "knoppen" }, annuleerKnop, opslaanKnop)),
+    melding,
+    h("div", { class: "bewerker" }, formulier, h("div", {}, h("h4", { class: "klein" }, "Voorbeeld"), voorbeeld))
+  ]);
+  ververs();
+  setTimeout(() => onderwerpVeld.focus(), 0);
+}
+
+// ---------- Nieuwe week ----------
+function nieuweWeekKnop() {
+  const vak = h("div", { class: "nieuwe-week" });
+  if (!staat.sjabloon) {
+    vak.appendChild(h("p", { class: "klein" }, "Nieuwe weken aanmaken: zet een Google Doc met \"sjabloon\" in de naam in je agendamap."));
+    return vak;
+  }
+  const laatste = staat.weken[staat.weken.length - 1];
+  const voorstel = laatste ? W.plusDagen(laatste.maandag, 7) : W.maandagVan(nu());
+  const datumVeld = h("input", { type: "date", value: W.isoDatum(voorstel) });
+  const melding = h("div", { class: "melding" });
+  const maakKnop = h("button", { class: "knop" }, "Aanmaken");
+  const formulier = h("div", { class: "kaart verborgen" },
+    h("h3", {}, "Nieuwe week aanmaken"),
+    h("p", { class: "klein" }, "Coffee! kopieert \"" + staat.sjabloon.name + "\" naar de juiste maandmap en vult de datums van de dagen in."),
+    h("label", {}, "Week van (maandag)"), datumVeld,
+    h("div", { class: "knoppen" }, maakKnop), melding);
+  maakKnop.addEventListener("click", async () => {
+    if (!datumVeld.value) return;
+    const maandag = W.maandagVan(W.vanIso(datumVeld.value));
+    maakKnop.disabled = true; maakKnop.textContent = "Bezig…";
+    try {
+      const nieuw = await G.maakNieuweWeek(staat.inst.map.id, maandag, staat.sjabloon);
+      await laadWeken();
+      staat.weekIndex = staat.weken.findIndex(w => w.bestand.id === nieuw.id);
+      if (staat.weekIndex < 0) staat.weekIndex = null;
+      toon();
+    } catch (e) {
+      melding.className = "melding fout"; melding.textContent = e.message || String(e);
+      maakKnop.disabled = false; maakKnop.textContent = "Aanmaken";
+    }
+  });
+  vak.append(h("button", { class: "knop secundair", onclick: () => formulier.classList.toggle("verborgen") }, "＋ Nieuwe week"), formulier);
+  return vak;
 }
 
 // ---------- Opbouw van de pagina ----------
@@ -528,7 +765,7 @@ async function start(viaKlik) {
 
 // Elke halve minuut het dashboard verversen (enkel bij echte tijd)
 setInterval(() => {
-  if (staat.weergave === "nu" && !staat.testtijd && G.isAangemeld() && !document.querySelector("details[open]")) toon();
+  if (staat.weergave === "nu" && !staat.testtijd && G.isAangemeld() && !document.querySelector("details[open]") && !document.querySelector(".venster")) toon();
 }, 30000);
 
 // Testtijd via de adresbalk: ?nu=2026-11-17T09:45

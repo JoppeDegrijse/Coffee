@@ -363,3 +363,19 @@ input[type=time] { padding: 8px 10px; border: 1px solid var(--lijn); border-radi
 .slot.gekozen { outline: 2px solid var(--karamel); }
 .slot-aantal { background: var(--karamel); color: #241a15; border-radius: 999px; font-size: .75rem; font-weight: 700; padding: 0 6px; }
 .todo .uit-blok { margin-left: auto; flex: none; align-self: center; }
+
+/* ---------- Bewerken: vorige les ---------- */
+.rechts { min-width: 0; }
+.paneel-tabs { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--lijn); }
+.paneel-tab {
+  font: inherit; font-family: var(--titel); font-weight: 700; font-size: .95rem; color: var(--tekst-zacht);
+  background: none; border: 0; border-bottom: 3px solid transparent; padding: 6px 12px; cursor: pointer; margin-bottom: -1px;
+}
+.paneel-tab.actief { color: var(--tekst); border-bottom-color: var(--karamel); }
+.vorige-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.vorige-nav .knop { margin: 0; }
+.vorige-wanneer { text-align: center; }
+.vorige-wanneer div::first-letter { text-transform: uppercase; }
+.overnemen { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.overnemen .knop { margin: 0; }
+.vorige-paneel .lesinhoud { grid-template-columns: 1fr; }

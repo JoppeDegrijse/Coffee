@@ -91,6 +91,15 @@ export function vorigeLes(lessen, huidige) {
   return { ...eerder[eerder.length - 1], zelfdeReeks: false };
 }
 
+// Volgend lesonderwerp in een reeks: "VLL kern 7 dag 15: herhaling" → "VLL kern 7 dag 16"
+// (laatste getal vóór de dubbelpunt + 1; de omschrijving na de dubbelpunt valt weg)
+export function volgendeInReeks(onderwerp) {
+  const kern = (onderwerp || "").split(":")[0].trim();
+  const m = kern.match(/^(.*\D)?(\d+)(\D*)$/);
+  if (!m) return null;
+  return (m[1] || "") + (parseInt(m[2], 10) + 1) + (m[3] || "");
+}
+
 // ---------- Zwemritme (½ P) ----------
 // referentie = iso-datum van een week waarin je meegaat zwemmen
 export function isZwemweek(referentie, datum) {

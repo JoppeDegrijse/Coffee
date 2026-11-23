@@ -130,7 +130,8 @@ function dagenVan(week) {
   if (!staat.cache.has(week.bestand.id)) {
     const p = G.leesWeekBestand(week.bestand)
       .then(dagen => {
-        dagen.forEach((d, i) => d.rijen.forEach((r, j) => { r.plaats = { dagIndex: i, rijIndex: j }; r.week = week; r.dagTitel = d.titel; }));
+        dagen.forEach((d, i) => d.rijen.forEach((r, j) => { r.plaats = { dagIndex: i, rijIndex: j }; r.week = week; r.dagTitel = d.titel;
+          r.datum = d.weekdag >= 0 ? W.plusDagen(week.maandag, d.weekdag) : null; }));
         return dagen;
       })
       .catch(e => { staat.cache.delete(week.bestand.id); throw e; });
@@ -871,7 +872,8 @@ function openBewerker(rij) {
   const ververs = () => voorbeeld.replaceChildren(lesKaart(B.voorbeeldRij(v, rij), { voorbeeld: true }));
 
   const vakVeld = h("input", { type: "text", list: "vakkenlijst", value: v.vak });
-  vakVeld.addEventListener("input", () => { v.vak = vakVeld.value; ververs(); });
+  let vakTimer = null;
+  vakVeld.addEventListener("input", () => { v.vak = vakVeld.value; ververs(); clearTimeout(vakTimer); vakTimer = setTimeout(() => toonVorige(0), 400); });
   const onderwerpVeld = h("input", { type: "text", value: v.onderwerp, placeholder: "bv. VLL kern 7 dag 15: herhaling" });
   onderwerpVeld.addEventListener("input", () => { v.onderwerp = onderwerpVeld.value; ververs(); });
 
@@ -962,6 +964,56 @@ function openBewerker(rij) {
       } }, "↺ Inhoud van " + wanneer + " overnemen"));
   }
 
+  // ----- Rechterkolom: vorige les van hetzelfde vak | voorbeeld -----
+  const vorigePaneel = h("div", { class: "vorige-paneel" });
+  const tabVorige = h("button", { type: "button", class: "paneel-tab actief" }, "Vorige les");
+  const tabVoorbeeld = h("button", { type: "button", class: "paneel-tab" }, "Voorbeeld");
+  const toonPaneel = (welk) => {
+    tabVorige.classList.toggle("actief", welk === "vorige"); tabVoorbeeld.classList.toggle("actief", welk === "voorbeeld");
+    vorigePaneel.classList.toggle("verborgen", welk !== "vorige"); voorbeeld.classList.toggle("verborgen", welk !== "voorbeeld");
+  };
+  tabVorige.addEventListener("click", () => toonPaneel("vorige"));
+  tabVoorbeeld.addEventListener("click", () => toonPaneel("voorbeeld"));
+  const rechts = h("div", { class: "rechts" }, h("div", { class: "paneel-tabs", role: "tablist" }, tabVorige, tabVoorbeeld), vorigePaneel, voorbeeld);
+  toonPaneel("vorige");
+
+  const zetVeld = (naam, waarde, veld) => { v[naam] = waarde; veld.value = waarde; ververs(); };
+  const zonderTherapie = (t) => t.split("\n").filter(l => !/^\s*(?:[-–•]\s+)?🟢/u.test(l)).join("\n");
+  let eerdereLessen = null;
+  async function toonVorige(index) {
+    vorigePaneel.replaceChildren(h("p", { class: "laden" }, "Vorige lessen zoeken…"));
+    try {
+      if (!eerdereLessen) {
+        const alle = await lessenUit(wekenRond(rij.week, 6));
+        for (const l of alle) if (l.rij.idem && !l.rij.idemVan) { const x = W.vorigeLes(alle, l); if (x) l.rij.idemVan = x; }
+        const grens = (rij.datum ? rij.datum.getTime() : Date.now()) + (rij.start || 0) * 60000;
+        eerdereLessen = alle.filter(l => l.datum.getTime() + (l.rij.start || 0) * 60000 < grens);
+      }
+    } catch (e) { vorigePaneel.replaceChildren(h("p", { class: "klein" }, "Vorige lessen konden niet geladen worden.")); return; }
+    const vak = W.vakSleutel(v.vak);
+    const lijst = vak ? eerdereLessen.filter(l => W.vakSleutel(l.rij.vak) === vak && (weergaveRij(l.rij).onderwerp || "").trim()).reverse() : [];
+    if (!vak) { vorigePaneel.replaceChildren(h("p", { class: "klein" }, "Vul een vak in om de vorige les te zien.")); return; }
+    if (!lijst.length) { vorigePaneel.replaceChildren(h("p", { class: "klein" }, "Geen eerdere les " + vakVoluit(v.vak) + " gevonden in de laatste zes weken.")); return; }
+    index = Math.max(0, Math.min(index, lijst.length - 1));
+    const l = lijst[index];
+    const toon = weergaveRij(l.rij);
+    const bv = B.rijNaarVelden(toon);
+    const volgende = index === 0 ? W.volgendeInReeks(toon.onderwerp) : null;
+    const wanneer = datumTekst(l.datum, { weekday: "long", day: "numeric", month: "long" }) + ", " + W.tijdTekst(l.rij.start);
+    vorigePaneel.replaceChildren(
+      h("div", { class: "vorige-nav" },
+        h("button", { type: "button", class: "knop klein secundair", disabled: index >= lijst.length - 1, onclick: () => toonVorige(index + 1), "aria-label": "Eerdere les" }, "← Eerder"),
+        h("div", { class: "vorige-wanneer" }, h("strong", {}, index === 0 ? "Vorige les " + vakVoluit(v.vak) : (index + 1) + " lessen terug"), h("div", { class: "klein" }, wanneer)),
+        h("button", { type: "button", class: "knop klein secundair", disabled: index === 0, onclick: () => toonVorige(index - 1), "aria-label": "Latere les" }, "Later →")),
+      h("div", { class: "overnemen" },
+        volgende ? h("button", { type: "button", class: "knop klein", title: "Als lesonderwerp invullen", onclick: () => zetVeld("onderwerp", volgende, onderwerpVeld) }, "↪ " + volgende) : null,
+        bv.doelen ? h("button", { type: "button", class: "knop klein secundair", onclick: () => { v.hadDoelen = true; zetVeld("doelen", bv.doelen, doelenVeld); } }, "Doelen overnemen") : null,
+        bv.verloop ? h("button", { type: "button", class: "knop klein secundair", onclick: () => { v.hadVerloop = true; zetVeld("verloop", zonderTherapie(bv.verloop), verloopVeld); } }, "Verloop overnemen") : null,
+        bv.materiaal ? h("button", { type: "button", class: "knop klein secundair", onclick: () => zetVeld("materiaal", bv.materiaal, materiaalVeld) }, "Materiaal overnemen") : null),
+      lesKaart(toon, { voorbeeld: true }));
+  }
+  toonVorige(0);
+
   const datumTekstDag = rij.dagTitel ? rij.dagTitel.charAt(0) + rij.dagTitel.slice(1).toLowerCase() : "";
   const formulier = h("div", { class: "formulier" },
     h("div", { class: "rij-velden" },
@@ -978,10 +1030,10 @@ function openBewerker(rij) {
 
   const venster = sluitbaarVenster([
     h("header", { class: "venster-kop" },
-      h("div", {}, h("h2", {}, "Lesuur bewerken"), h("div", { class: "klein" }, datumTekstDag + " · " + rij.uur)),
+      h("div", {}, h("h2", {}, "Lesuur bewerken"), h("div", { class: "klein" }, datumTekstDag + ", " + rij.uur)),
       h("div", { class: "knoppen" }, annuleerKnop, opslaanKnop)),
     melding, idemBalk,
-    h("div", { class: "bewerker" }, formulier, h("div", {}, h("h4", { class: "klein" }, "Voorbeeld"), voorbeeld))
+    h("div", { class: "bewerker" }, formulier, rechts)
   ]);
   ververs();
   setTimeout(() => onderwerpVeld.focus(), 0);

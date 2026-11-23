@@ -8,7 +8,17 @@
 <meta name="apple-mobile-web-app-title" content="Coffee!">
 <title>Coffee!</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☕</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&display=swap">
 <link rel="stylesheet" href="css/app.css">
+<script>
+  // thema meteen toepassen (geen witte flits bij het laden)
+  try {
+    var t = (JSON.parse(localStorage.getItem("coffee_instellingen") || "{}").thema) || "auto";
+    if (t !== "auto") document.documentElement.setAttribute("data-thema", t);
+  } catch (e) {}
+</script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script type="module" src="js/app.js"></script>
 </head>

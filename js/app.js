@@ -17,6 +17,23 @@ function laadInstellingen() {
 }
 function bewaarInstellingen() { localStorage.setItem(INST_SLEUTEL, JSON.stringify(staat.inst)); }
 
+// ---------- Thema: auto (volgt toestel), licht of donker ----------
+const THEMA_VOLGORDE = ["auto", "licht", "donker"];
+const THEMA_INFO = { auto: ["🌓", "Thema volgt je toestel"], licht: ["☀️", "Licht thema (latte)"], donker: ["🌙", "Donker thema (espresso)"] };
+function pasThemaToe() {
+  const t = staat.inst.thema || "auto";
+  if (t === "auto") document.documentElement.removeAttribute("data-thema");
+  else document.documentElement.setAttribute("data-thema", t);
+  const donker = t === "donker" || (t === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", donker ? "#120d0a" : "#2b1d14");
+}
+function volgendThema() {
+  const i = THEMA_VOLGORDE.indexOf(staat.inst.thema || "auto");
+  staat.inst.thema = THEMA_VOLGORDE[(i + 1) % THEMA_VOLGORDE.length];
+  bewaarInstellingen(); pasThemaToe(); toon();
+}
+
 // ---------- Toestand ----------
 const staat = {
   inst: laadInstellingen(),
@@ -227,8 +244,8 @@ function lesKaart(rij, opties = {}) {
   const t = opties.voorbeeld ? rij : weergaveRij(rij);
   const idemChip = !opties.voorbeeld && rij.idem
     ? h("span", { class: "chip idem" }, rij.idemVan
-        ? "↺ IDEM · zoals " + datumTekst(rij.idemVan.datum, { weekday: "short", day: "numeric", month: "short" })
-        : "↺ IDEM · vorige les niet gevonden")
+        ? "↺ IDEM, zoals " + datumTekst(rij.idemVan.datum, { weekday: "short", day: "numeric", month: "short" })
+        : "↺ IDEM, vorige les niet gevonden")
     : null;
   return h("article", { class: "kaart les" + (opties.groot ? " groot" : "") },
     h("header", {},
@@ -350,15 +367,21 @@ async function toonNu(doel) {
   doel.appendChild(hoofd);
 
   if (huidig) {
-    hoofd.appendChild(h("div", { class: "label-boven" }, "Nu bezig · nog " + (huidig.eind - nuMin) + " min"));
-    hoofd.appendChild(rijKaart(huidig, n, { groot: true }));
+    hoofd.appendChild(h("div", { class: "label-boven" }, "Nu bezig, nog " + (huidig.eind - nuMin) + " min"));
+    const kaart = rijKaart(huidig, n, { groot: true });
+    // voortgangsbalk: hoe ver het lesuur al gevorderd is
+    const procent = Math.max(0, Math.min(100, Math.round((nuMin - huidig.start) / Math.max(1, huidig.eind - huidig.start) * 100)));
+    const kop = kaart.querySelector("header");
+    if (kop) kop.after(h("div", { class: "voortgang", role: "progressbar", "aria-valuenow": procent, "aria-valuemin": 0, "aria-valuemax": 100,
+      "aria-label": "Verloop van dit lesuur" }, h("span", { style: "width:" + procent + "%" })));
+    hoofd.appendChild(kaart);
     if (huidig.soort === "les" && !huidig.idem) {
       const vorigeVak = h("div", { class: "vorige" }, h("p", { class: "klein" }, "Vorige les zoeken…"));
       hoofd.appendChild(vorigeVak);
       toonVorigeLes(vorigeVak, week, { datum: W.middernacht(n), rij: huidig });
     }
   } else if (eerste && nuMin < eerste.start) {
-    hoofd.appendChild(h("div", { class: "label-boven" }, "Straks · om " + W.tijdTekst(eerste.start)));
+    hoofd.appendChild(h("div", { class: "label-boven" }, "Straks om " + W.tijdTekst(eerste.start)));
     hoofd.appendChild(rijKaart(eerste, n, { groot: true }));
     if (eerste.soort === "les" && !eerste.idem) {
       const vorigeVak = h("div", { class: "vorige" });
@@ -371,7 +394,7 @@ async function toonNu(doel) {
   }
 
   if (volgende && volgende !== eerste) {
-    hoofd.appendChild(h("div", { class: "label-boven" }, "Daarna · om " + W.tijdTekst(volgende.start)));
+    hoofd.appendChild(h("div", { class: "label-boven" }, "Daarna om " + W.tijdTekst(volgende.start)));
     const kort = h("details", { class: "rij " + rijKlasse(volgende) },
       h("summary", {}, h("span", { class: "tijd" }, W.tijdTekst(volgende.start)),
         rijLabel(volgende),
@@ -396,7 +419,7 @@ async function toonVorigeLes(vak, week, huidige) {
     vak.appendChild(h("details", { class: "rij les" },
       h("summary", {},
         h("span", { class: "label-inline" }, vorige.zelfdeReeks ? "Vorige les in deze reeks" : "Vorige les " + vakVoluit(vorige.rij.vak)),
-        h("span", { class: "titel" }, datumTekst(vorige.datum, { weekday: "short", day: "numeric", month: "short" }) + " · " + lesTitel(vorige.rij))),
+        h("span", { class: "titel" }, h("span", { class: "wanneer" }, datumTekst(vorige.datum, { weekday: "short", day: "numeric", month: "short" })), lesTitel(vorige.rij))),
       lesKaart(vorige.rij)));
   } catch (e) {
     vak.replaceChildren(h("p", { class: "klein" }, "Vorige les kon niet geladen worden."));
@@ -492,6 +515,14 @@ function toonInstellingen(doel) {
           zeg("ok", "Gevonden: " + inst.map.pad + " (" + staat.weken.length + " weken).");
         } catch (e) { zeg("fout", e.message); }
       } }, "Zoek deze map")
+    ),
+    h("section", { class: "kaart" },
+      h("h3", {}, "Thema"),
+      h("p", { class: "klein" }, "Kies licht (latte), donker (espresso) of laat Coffee! je toestel volgen."),
+      h("div", { class: "knoppen" }, THEMA_VOLGORDE.map(t => h("button", {
+        class: "knop" + ((inst.thema || "auto") === t ? "" : " secundair"),
+        onclick: () => { inst.thema = t; bewaarInstellingen(); pasThemaToe(); toon(); } },
+        THEMA_INFO[t][0] + " " + { auto: "Zoals mijn toestel", licht: "Licht", donker: "Donker" }[t])))
     ),
     h("section", { class: "kaart" },
       h("h3", {}, "Zwemmen (½ P)"),
@@ -771,8 +802,11 @@ function kopbalk() {
   return h("header", { class: "balk" },
     h("div", { class: "merk" }, "☕ Coffee!"),
     staat.testtijd ? h("button", { class: "testtijd", title: "Klik om terug te keren naar de echte tijd", onclick: () => { staat.testtijd = null; toon(); } },
-      "Testtijd: " + datumTekst(nu(), { weekday: "short", day: "numeric", month: "short" }) + " " + W.tijdTekst(W.minutenVan(nu())) + " ✕") : null,
-    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"), knop("instellingen", "⚙︎"))
+      "Testtijd " + datumTekst(nu(), { weekday: "short", day: "numeric", month: "short" }) + " " + W.tijdTekst(W.minutenVan(nu())) + " ✕") : null,
+    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"),
+      h("button", { class: "tab thema-knop", title: THEMA_INFO[staat.inst.thema || "auto"][1] + " (klik om te wisselen)",
+        "aria-label": THEMA_INFO[staat.inst.thema || "auto"][1], onclick: volgendThema }, THEMA_INFO[staat.inst.thema || "auto"][0]),
+      knop("instellingen", "⚙︎"))
   );
 }
 
@@ -842,6 +876,9 @@ async function start(viaKlik) {
 setInterval(() => {
   if (staat.weergave === "nu" && !staat.testtijd && G.isAangemeld() && !document.querySelector("details[open]") && !document.querySelector(".venster")) toon();
 }, 30000);
+
+pasThemaToe();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", pasThemaToe);
 
 // Testtijd via de adresbalk: ?nu=2026-11-17T09:45
 const param = new URLSearchParams(location.search).get("nu");

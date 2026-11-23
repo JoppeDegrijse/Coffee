@@ -2,7 +2,8 @@
 //
 // Resultaat: [{ titel, weekdag, rijen: [rij] }]
 // rij (les):   { soort:"les",  start, eind, uur, vak, onderwerp, doelen[], regels[], materiaal[], groen[], rood[], links[] }
-// rij (blok):  { soort:"blok"|"perm", start, eind, uur, titel, halfP, regels[], groen[], rood[], links[] }
+// rij (blok):  { soort:"blok"|"perm"|"vrij", start, eind, uur, titel, halfP, bewaking, regels[], groen[], rood[], links[] }
+//               perm = permanentie (P of ½ P), vrij = LO (niet op school), bewaking = rode "bewaking" in het blok
 // start/eind = minuten sinds middernacht (of null). regels = [{ tekst, niveau }] (niveau -1 = gewone tekst).
 
 export const WEEKDAGEN = ["MAANDAG", "DINSDAG", "WOENSDAG", "DONDERDAG", "VRIJDAG", "ZATERDAG", "ZONDAG"];
@@ -69,8 +70,15 @@ function verwerkDagtabel(rijen, dag) {
       const c = tweede ? tweede.inhoud : LEEG;
       const isP = /\(\s*(½|1\/2)?\s*P\s*\)/i.test(c.tekst);
       const halfP = /\(\s*(½|1\/2)\s*P\s*\)/i.test(c.tekst);
-      dag.rijen.push({ soort: isP ? "perm" : "blok", ...tijd, titel: c.tekst.split("\n")[0].trim(),
-                       halfP, regels: c.regels.slice(1), groen: c.groen, rood: c.rood, links: c.links });
+      const eersteRegel = c.tekst.split("\n")[0].trim();
+      const isLO = /^LO\b/i.test(eersteRegel);
+      // titel zonder "(P)" en zonder de rode herinnering (die verschijnt apart)
+      let titel = eersteRegel.replace(/\s*\(\s*(½|1\/2)?\s*P\s*\)\s*/gi, " ");
+      for (const r of c.rood) titel = titel.replace(r, "");
+      titel = titel.replace(/[\s\-–:,]+$/, "").replace(/\s+/g, " ").trim() || eersteRegel;
+      dag.rijen.push({ soort: isP ? "perm" : isLO ? "vrij" : "blok", ...tijd, titel,
+                       halfP, bewaking: c.rood.some(r => /bewak/i.test(r)),
+                       regels: c.regels.slice(1), groen: c.groen, rood: c.rood, links: c.links });
     } else {
       const vak = cellen[1].inhoud.tekst.replace(/-\s*\n\s*/g, "").replace(/\s+/g, " ").trim();
       const inhoud = cellen[2] ? cellen[2].inhoud : LEEG;

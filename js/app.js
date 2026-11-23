@@ -118,6 +118,20 @@ function wekenRond(week, terug) {
 // ---------- Weergave: onderdelen ----------
 function vakLabel(vak) { return h("span", { class: "vak" }, vak || "—"); }
 
+// Afkortingen voluit in zinnen (WO, SOVA, CREA en LO blijven afgekort)
+const VAKNAMEN = { t: "taal", funct: "functionele taal", funcw: "functionele wiskunde", go: "godsdienst",
+                   p: "permanentie", proj: "project", w: "wiskunde" };
+function vakVoluit(vak) { return VAKNAMEN[W.vakSleutel(vak)] || vak; }
+
+// Label vooraan een rij: vak, P / ½ P, LO of niets
+function rijLabel(rij) {
+  if (rij.soort === "les") return vakLabel(rij.vak);
+  if (rij.soort === "perm") return h("span", { class: "vak perm" }, rij.halfP ? "½ P" : "P");
+  if (rij.soort === "vrij") return vakLabel("LO");
+  return h("span", { class: "vak leeg" }, "");
+}
+const rijKlasse = (rij) => rij.soort + (rij.bewaking ? " bewaking" : "");
+
 function chips(rij) {
   return h("div", { class: "chips" },
     rij.groen.map(t => h("span", { class: "chip groen", title: "Therapie / afwezig" }, "🟢 " + t.replace(/^\(|\)$/g, ""))),
@@ -127,11 +141,19 @@ function chips(rij) {
 
 function regelsWeergave(rij) {
   const wrap = h("div", { class: "regels" });
+  const gekleurd = rij.groen.concat(rij.rood).filter(Boolean);
   for (const r of rij.regels || []) {
-    const t = r.tekst.trim();
+    let t = r.tekst.replace(/\s+/g, " ").trim();
     if (/^Lesonderwerp:/i.test(t)) continue;                  // staat al in de titel
+    // therapie en herinneringen staan al als label bovenaan: niet herhalen
+    let rest = t;
+    for (const g of gekleurd) rest = rest.replace(g, "");
+    if (rest !== t) {
+      if (!rest.replace(/[\s\-–:,.()!]/g, "")) continue;
+      t = rest.replace(/[\s\-–:,]+$/, "").trim();
+    }
     if (!t) { wrap.appendChild(h("div", { class: "witruimte" })); continue; }
-    const kleur = rij.groen.some(g => t.includes(g)) ? " groen" : rij.rood.some(x => t.includes(x)) ? " rood" : "";
+    const kleur = "";
     const kop = t.match(/^(Doelen|Verloop):\s*(.*)$/i);
     if (kop) { wrap.appendChild(h("div", { class: "kop" + kleur }, h("strong", {}, kop[1] + ":"), " ", ...metLinks(kop[2]))); continue; }
     if (/^(Inl|Kern|Slot)\b\.?$/i.test(t)) { wrap.appendChild(h("div", { class: "fase" }, t)); continue; }
@@ -170,7 +192,10 @@ function lesKaart(rij, opties = {}) {
 
 function blokKaart(rij, datum, opties = {}) {
   let extra = null;
-  if (rij.soort === "perm") {
+  if (rij.soort === "vrij") {
+    extra = h("div", {}, h("p", { class: "nadruk" }, "Je bent vrij en hoeft niet op school te zijn."),
+      h("p", { class: "klein" }, "Hier komen straks de to-do's die je in dit blok plant."));
+  } else if (rij.soort === "perm") {
     let zwem = null;
     if (rij.halfP) {
       const z = W.isZwemweek(staat.inst.zwemweek, datum);
@@ -182,11 +207,11 @@ function blokKaart(rij, datum, opties = {}) {
     extra = h("div", {}, zwem,
       echtePerm ? h("p", { class: "klein" }, "Hier komen straks de to-do's die je in dit permanentieblok plant.") : null);
   }
-  return h("article", { class: "kaart blok " + rij.soort + (opties.groot ? " groot" : "") },
+  return h("article", { class: "kaart blok " + rijKlasse(rij) + (opties.groot ? " groot" : "") },
     h("header", {},
       h("div", { class: "tijd" }, rij.uur),
-      rij.soort === "perm" ? h("span", { class: "vak perm" }, rij.halfP ? "½ P" : "P") : null,
-      h("h3", {}, rij.titel)
+      rij.soort === "blok" ? null : rijLabel(rij),
+      h("h3", {}, rij.soort === "vrij" ? "Vrij" : rij.titel)
     ),
     chips(rij),
     rij.regels.length ? regelsWeergave(rij) : null,
@@ -201,11 +226,11 @@ function dagLijst(dag, datum, nuMin) {
   for (const rij of dag.rijen) {
     const bezig = nuMin != null && rij.start != null && nuMin >= rij.start && nuMin < rij.eind;
     const voorbij = nuMin != null && rij.eind != null && nuMin >= rij.eind;
-    const titel = rij.soort === "les" ? (rij.onderwerp || "—") : rij.titel;
-    const det = h("details", { class: "rij " + rij.soort + (bezig ? " bezig" : "") + (voorbij ? " voorbij" : "") },
+    const titel = rij.soort === "les" ? (rij.onderwerp || "—") : rij.soort === "vrij" ? "Vrij" : rij.titel;
+    const det = h("details", { class: "rij " + rijKlasse(rij) + (bezig ? " bezig" : "") + (voorbij ? " voorbij" : "") },
       h("summary", {},
         h("span", { class: "tijd" }, W.tijdTekst(rij.start)),
-        rij.soort === "les" ? vakLabel(rij.vak) : rij.soort === "perm" ? h("span", { class: "vak perm" }, rij.halfP ? "½ P" : "P") : h("span", { class: "vak leeg" }, ""),
+        rijLabel(rij),
         h("span", { class: "titel" }, titel),
         rij.groen.length ? h("span", { class: "stip groen", title: rij.groen.join(", ") }, "●") : null,
         rij.rood.length ? h("span", { class: "stip rood", title: rij.rood.join(", ") }, "●") : null
@@ -285,10 +310,10 @@ async function toonNu(doel) {
 
   if (volgende && volgende !== eerste) {
     hoofd.appendChild(h("div", { class: "label-boven" }, "Daarna · om " + W.tijdTekst(volgende.start)));
-    const kort = h("details", { class: "rij " + volgende.soort },
+    const kort = h("details", { class: "rij " + rijKlasse(volgende) },
       h("summary", {}, h("span", { class: "tijd" }, W.tijdTekst(volgende.start)),
-        volgende.soort === "les" ? vakLabel(volgende.vak) : h("span", { class: "vak leeg" }, ""),
-        h("span", { class: "titel" }, volgende.soort === "les" ? volgende.onderwerp : volgende.titel)),
+        rijLabel(volgende),
+        h("span", { class: "titel" }, volgende.soort === "les" ? volgende.onderwerp : volgende.soort === "vrij" ? "Vrij" : volgende.titel)),
       rijKaart(volgende, n));
     hoofd.appendChild(kort);
   }
@@ -305,10 +330,10 @@ async function toonVorigeLes(vak, week, huidige) {
     const lessen = await lessenUit(wekenRond(week, 4));
     const vorige = W.vorigeLes(lessen, huidige);
     vak.replaceChildren();
-    if (!vorige) { vak.appendChild(h("p", { class: "klein" }, "Geen vorige les van dit vak gevonden in de laatste weken.")); return; }
+    if (!vorige) { vak.appendChild(h("p", { class: "klein" }, "Geen vorige les " + vakVoluit(huidige.rij.vak) + " gevonden in de laatste weken.")); return; }
     vak.appendChild(h("details", { class: "rij les" },
       h("summary", {},
-        h("span", { class: "label-inline" }, vorige.zelfdeReeks ? "Vorige les in deze reeks" : "Vorige les " + vorige.rij.vak),
+        h("span", { class: "label-inline" }, vorige.zelfdeReeks ? "Vorige les in deze reeks" : "Vorige les " + vakVoluit(vorige.rij.vak)),
         h("span", { class: "titel" }, datumTekst(vorige.datum, { weekday: "short", day: "numeric", month: "short" }) + " · " + vorige.rij.onderwerp)),
       lesKaart(vorige.rij)));
   } catch (e) {

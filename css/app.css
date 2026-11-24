@@ -474,3 +474,72 @@ select { width: 100%; padding: 9px 11px; border: 1px solid var(--lijn); border-r
 .overzichttabel tbody tr:last-child td { border-bottom: 0; }
 .privacy { margin: 6px 0 4px; padding-left: 18px; }
 .privacy li { margin-bottom: 4px; }
+
+/* ---------- Resultaatniveaus (evaluatie) ---------- */
+:root {
+  --sterk-bg: #d9ead2; --sterk-tekst: #2c5a27; --sterk-lijn: #93bf86; --sterk-vul: #5f9a55;
+  --goed-bg: #ebf2e3;  --goed-tekst: #3d6637;  --goed-lijn: #c5dbb8;  --goed-vul: #9cc28c;
+  --aandacht-bg: #f8e8bd; --aandacht-tekst: #735408; --aandacht-lijn: #e3c46d; --aandacht-vul: #d9a93a;
+  --zorg-bg: #f5dad2;  --zorg-tekst: #93301f;  --zorg-lijn: #e2a797;  --zorg-vul: #c25a43;
+  --geen-bg: #ece6df;  --geen-tekst: #74695f;
+}
+:root[data-thema="donker"] {
+  --sterk-bg: #233a20; --sterk-tekst: #acd8a0; --sterk-lijn: #4f7f46; --sterk-vul: #7fb672;
+  --goed-bg: #1e2c1b;  --goed-tekst: #9cc690;  --goed-lijn: #36502f;  --goed-vul: #5d8a52;
+  --aandacht-bg: #3a2f14; --aandacht-tekst: #f0cf7e; --aandacht-lijn: #6d5720; --aandacht-vul: #c99a35;
+  --zorg-bg: #3d1f1a;  --zorg-tekst: #ffa596;  --zorg-lijn: #6e3227;  --zorg-vul: #c96652;
+  --geen-bg: #2a2420;  --geen-tekst: #a59585;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-thema="licht"]) {
+    --sterk-bg: #233a20; --sterk-tekst: #acd8a0; --sterk-lijn: #4f7f46; --sterk-vul: #7fb672;
+    --goed-bg: #1e2c1b;  --goed-tekst: #9cc690;  --goed-lijn: #36502f;  --goed-vul: #5d8a52;
+    --aandacht-bg: #3a2f14; --aandacht-tekst: #f0cf7e; --aandacht-lijn: #6d5720; --aandacht-vul: #c99a35;
+    --zorg-bg: #3d1f1a;  --zorg-tekst: #ffa596;  --zorg-lijn: #6e3227;  --zorg-vul: #c96652;
+    --geen-bg: #2a2420;  --geen-tekst: #a59585;
+  }
+}
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.niveau {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 9px; border-radius: 999px; border: 1px solid transparent;
+  font-family: var(--titel); font-weight: 700; font-size: .88rem; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.niv-icoon { font-size: .85em; }
+.niveau.niv-sterk, .cel.niv-sterk { background: var(--sterk-bg); color: var(--sterk-tekst); border-color: var(--sterk-lijn); }
+.niveau.niv-goed, .cel.niv-goed { background: var(--goed-bg); color: var(--goed-tekst); border-color: var(--goed-lijn); }
+.niveau.niv-aandacht, .cel.niv-aandacht { background: var(--aandacht-bg); color: var(--aandacht-tekst); border-color: var(--aandacht-lijn); }
+.niveau.niv-zorg, .cel.niv-zorg { background: var(--zorg-bg); color: var(--zorg-tekst); border-color: var(--zorg-lijn); }
+.niveau.niv-geen, .cel.niv-geen { background: var(--geen-bg); color: var(--geen-tekst); font-family: var(--lees); font-weight: 400; }
+.niv-vul-sterk { background: var(--sterk-vul) !important; }
+.niv-vul-goed { background: var(--goed-vul) !important; }
+.niv-vul-aandacht { background: var(--aandacht-vul) !important; }
+.niv-vul-zorg { background: var(--zorg-vul) !important; }
+.staaf-rij .niveau { min-width: 4.6em; justify-content: center; }
+.legende { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.legende .niveau { font-size: .8rem; font-weight: 700; }
+.trend { margin-left: 6px; font-weight: 700; font-size: 1.05rem; color: var(--tekst-zacht); }
+.trend-op { color: var(--sterk-tekst); }
+.trend-neer { color: var(--zorg-tekst); }
+.kaart header .niveau { margin-left: 2px; }
+input.score:placeholder-shown { border-style: dashed; border-color: var(--tekst-zacht); }
+.grensveld { width: 70px !important; }
+.klastabel { border-collapse: separate; border-spacing: 4px; width: 100%; font-size: .92rem; }
+.klastabel th { font-family: var(--titel); font-weight: 700; color: var(--tekst-zacht); text-align: center; vertical-align: bottom; padding: 4px; }
+.klastabel th.n { text-align: left; }
+.klastabel tbody th.n { color: var(--tekst); white-space: nowrap; }
+.kolomkop { display: flex; flex-direction: column; align-items: center; text-decoration: none; color: var(--tekst); max-width: 120px; margin: 0 auto; }
+.kolomdatum { font-size: .78rem; color: var(--tekst-zacht); font-weight: 500; }
+.kolomtitel { font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+.klastabel td.cel {
+  text-align: center; border-radius: 8px; border: 1px solid transparent; padding: 8px 6px; min-width: 74px;
+  font-family: var(--titel); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.klastabel td.cel .niv-icoon { margin-right: 4px; }
+.klastabel td.open { border: 1px dashed var(--tekst-zacht); }
+.klastabel td.niet { background: transparent; }
+.celknop { font: inherit; width: 100%; background: none; border: 0; color: var(--tekst-zacht); cursor: pointer; }
+.klastabel td.gem-cel { white-space: nowrap; padding-left: 10px; }
+.een-onderdeel .kol-totaal { display: none; }
+.klastabel { table-layout: fixed; }
+.klastabel thead th.n { width: 130px; }
+.klastabel thead th:last-child { width: 150px; }

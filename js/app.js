@@ -557,6 +557,23 @@ function toonInstellingen(doel) {
       })()
     ),
     h("section", { class: "kaart" },
+      h("h3", {}, "Evaluatie: grenzen"),
+      h("p", { class: "klein" }, "Vanaf welk percentage is een resultaat sterk, goed of aandacht? Daaronder is het zorg."),
+      (() => {
+        const gr = grenzen();
+        const veld = (w) => h("input", { type: "text", inputmode: "numeric", value: String(w), class: "grensveld" });
+        const s1 = veld(gr.sterk), s2 = veld(gr.goed), s3 = veld(gr.aandacht);
+        return h("div", { class: "rij-tijden" },
+          h("label", {}, "★ Sterk vanaf", s1), h("label", {}, "✓ Goed vanaf", s2), h("label", {}, "⚠ Aandacht vanaf", s3),
+          h("button", { class: "knop", onclick: () => {
+            const [a, b, c] = [s1, s2, s3].map(x => Number(x.value));
+            if (![a, b, c].every(x => Number.isFinite(x) && x > 0 && x <= 100) || !(a > b && b > c)) return zeg("fout", "Kies drie percentages van hoog naar laag, bv. 80, 65 en 50.");
+            inst.grenzen = { sterk: a, goed: b, aandacht: c }; bewaarInstellingen(); zeg("ok", "Grenzen opgeslagen.");
+          } }, "Opslaan"),
+          h("button", { class: "knop secundair", onclick: () => { delete inst.grenzen; bewaarInstellingen(); s1.value = 80; s2.value = 65; s3.value = 50; zeg("ok", "Standaardgrenzen (80, 65, 50) hersteld."); } }, "Standaard"));
+      })()
+    ),
+    h("section", { class: "kaart" },
       h("h3", {}, "Testtijd"),
       h("p", { class: "klein" }, "Doe alsof het een ander moment is, om het dashboard 's avonds of in het weekend uit te proberen."),
       testVeld,
@@ -867,12 +884,36 @@ const terugKnop = () => h("button", { class: "knop klein secundair terug", oncli
 const procentTekst = (r) => r.procent != null ? r.procent + "%" : r.status === "afw" ? "afwezig" : r.status === "vrij" ? "vrijgesteld" : "";
 const datumKort = (iso) => datumTekst(W.vanIso(iso), { weekday: "short", day: "numeric", month: "short" });
 
-// Staafje: lengte = percentage (één kleur), getal staat er altijd bij; onder 50 % een ⚠
+// Resultaatniveaus: kleur + icoon + getal (nooit kleur alleen)
+const grenzen = () => staat.inst.grenzen || E.STANDAARD_GRENZEN;
+function niveauLabel(procent, extra = "") {
+  const n = E.niveau(procent, grenzen());
+  if (!n) return h("span", { class: "klein" }, "–");
+  return h("span", { class: "niveau niv-" + n, title: E.NIVEAUS[n].naam + ": " + procent + "%" + extra },
+    h("span", { class: "niv-icoon", "aria-hidden": "true" }, E.NIVEAUS[n].icoon), procent + "%",
+    h("span", { class: "sr-only" }, " (" + E.NIVEAUS[n].naam.toLowerCase() + ")"));
+}
+// Staafje: lengte = percentage, kleur = niveau, getal + icoon erbij
 function procentStaaf(procent, titel) {
   if (procent == null) return h("span", { class: "klein" }, "–");
+  const n = E.niveau(procent, grenzen());
   return h("span", { class: "staaf-rij", title: titel || procent + "%" },
-    h("span", { class: "staaf" }, h("span", { style: "width:" + Math.min(100, procent) + "%" })),
-    h("span", { class: "staaf-getal" }, (procent < 50 ? "⚠ " : "") + procent + "%"));
+    h("span", { class: "staaf" }, h("span", { class: "niv-vul-" + n, style: "width:" + Math.min(100, procent) + "%" })),
+    niveauLabel(procent));
+}
+const TREND = { op: ["↗", "beter dan de vorige toetsen"], neer: ["↘", "minder dan de vorige toetsen"], gelijk: ["→", "ongeveer gelijk"] };
+function trendTeken(t) {
+  if (!t) return null;
+  return h("span", { class: "trend trend-" + t, title: "Trend: " + TREND[t][1] }, TREND[t][0], h("span", { class: "sr-only" }, " " + TREND[t][1]));
+}
+function legende() {
+  const gr = grenzen();
+  return h("div", { class: "legende", "aria-label": "Legende resultaatniveaus" },
+    h("span", { class: "niveau niv-sterk" }, h("span", { class: "niv-icoon" }, "★"), "Sterk ", gr.sterk + "%+"),
+    h("span", { class: "niveau niv-goed" }, h("span", { class: "niv-icoon" }, "✓"), "Goed ", gr.goed + "–" + (gr.sterk - 1) + "%"),
+    h("span", { class: "niveau niv-aandacht" }, h("span", { class: "niv-icoon" }, "⚠"), "Aandacht ", gr.aandacht + "–" + (gr.goed - 1) + "%"),
+    h("span", { class: "niveau niv-zorg" }, h("span", { class: "niv-icoon" }, "!"), "Zorg <", gr.aandacht + "%"),
+    h("span", { class: "niveau niv-geen" }, "afw / vrij"));
 }
 
 function toonEvaluatie(doel) {
@@ -880,6 +921,7 @@ function toonEvaluatie(doel) {
   if (ev.scherm === "toets") { const t = (g.toetsen || []).find(x => x.id === ev.id && !x.verwijderd); if (t) return toonToets(doel, t); }
   if (ev.scherm === "leerling") { const l = (g.leerlingen || []).find(x => x.id === ev.id && !x.verwijderd); if (l) return toonLeerling(doel, l); }
   if (ev.scherm === "leerlingen") return toonLeerlingenBeheer(doel);
+  if (ev.scherm === "klas" && E.VAKKEN[ev.id]) return toonKlasoverzicht(doel, ev.id);
   ev.scherm = "lijst";
   const ll = E.leerlingen(g);
   doel.replaceChildren(...[
@@ -899,7 +941,7 @@ function toonEvaluatie(doel) {
             onclick: () => { ev.vak = k; toon(); } }, naam)));
       const zichtbaar = alle.filter(t => ev.vak === "alle" || t.vak === ev.vak);
       return [
-        h("h3", { class: "sectie" }, "Toetsen"), filter,
+        h("h3", { class: "sectie" }, "Toetsen"), filter, legende(),
         zichtbaar.length ? h("div", { class: "toetslijst" }, zichtbaar.map(t => {
           const st = E.statistiek(D.data(), t);
           return h("button", { class: "toetsrij", onclick: () => gaNaar("toets", t.id) },
@@ -909,6 +951,9 @@ function toonEvaluatie(doel) {
             h("span", { class: "klein" }, st.ingevuld + "/" + st.aantal + " ingevuld"),
             procentStaaf(st.gemiddelde, "Gemiddelde: " + (st.gemiddelde == null ? "nog geen punten" : st.gemiddelde + "%")));
         })) : h("p", { class: "klein" }, alle.length ? "Geen toetsen voor dit vak." : "Nog geen toetsen. Maak je eerste toets aan met ＋ Nieuwe toets."),
+        h("h3", { class: "sectie" }, "Klasoverzicht"),
+        h("div", { class: "leerlingknoppen" }, Object.entries(E.VAKKEN).map(([k, v]) =>
+          h("button", { class: "knop secundair", onclick: () => gaNaar("klas", k) }, "▦ " + v.naam))),
         h("h3", { class: "sectie" }, "Per leerling"),
         h("div", { class: "leerlingknoppen" }, E.leerlingen(D.data()).map(l =>
           h("button", { class: "knop secundair", onclick: () => gaNaar("leerling", l.id) }, l.naam)))
@@ -1042,11 +1087,11 @@ function toonToets(doel, toets) {
     for (const l of ll) {
       const r = E.resultaat(t, l.id);
       totaalCellen[l.id].tot.textContent = r.totaal != null ? E.toonScore(r.totaal) + (r.max !== max ? " /" + E.toonScore(r.max) : "") : "";
-      totaalCellen[l.id].pct.replaceChildren(r.procent != null ? procentStaaf(r.procent) : h("span", { class: "klein" }, procentTekst(r)));
+      totaalCellen[l.id].pct.replaceChildren(r.procent != null ? niveauLabel(r.procent) : r.status === "leeg" ? h("span", { class: "klein" }, "") : h("span", { class: "niveau niv-geen" }, procentTekst(r)));
     }
     const st = E.statistiek(D.data(), t);
     st.perOnderdeel.forEach((w, i) => { gemCellen[i].textContent = w == null ? "" : E.toonScore(w); });
-    gemCellen[gemCellen.length - 1].replaceChildren(procentStaaf(st.gemiddelde));
+    gemCellen[gemCellen.length - 1].replaceChildren(st.gemiddelde != null ? niveauLabel(st.gemiddelde) : "");
   };
   const invoer = [];   // [rij][kolom]
   const rijen = ll.map((l, ri) => {
@@ -1075,17 +1120,17 @@ function toonToets(doel, toets) {
       });
       return h("td", {}, veld);
     });
-    totaalCellen[l.id] = { tot: h("td", { class: "totaal" }), pct: h("td", { class: "pct" }) };
+    totaalCellen[l.id] = { tot: h("td", { class: "totaal kol-totaal" }), pct: h("td", { class: "pct" }) };
     return h("tr", {}, h("th", { scope: "row" }, h("button", { class: "linkknop", onclick: () => gaNaar("leerling", l.id) }, l.naam)),
       cellen, totaalCellen[l.id].tot, totaalCellen[l.id].pct);
   });
   toets.onderdelen.forEach(() => gemCellen.push(h("td", { class: "gem" })));
-  gemCellen.push(h("td", { class: "gem" }));   // totaal (leeg)
+  gemCellen.push(h("td", { class: "gem kol-totaal" }));   // totaal (leeg)
   gemCellen.push(h("td", { class: "gem pct" }));
-  const tabel = h("table", { class: "puntentabel" },
+  const tabel = h("table", { class: "puntentabel" + (toets.onderdelen.length === 1 ? " een-onderdeel" : "") },
     h("thead", {}, h("tr", {}, h("th", {}, "Leerling"),
       toets.onderdelen.map(o => h("th", {}, o.naam, h("span", { class: "max" }, "/" + E.toonScore(o.max)))),
-      h("th", {}, "Totaal", h("span", { class: "max" }, "/" + E.toonScore(max))), h("th", {}, "%"))),
+      h("th", { class: "kol-totaal" }, "Totaal", h("span", { class: "max" }, "/" + E.toonScore(max))), h("th", {}, "%"))),
     h("tbody", {}, rijen),
     h("tfoot", {}, h("tr", {}, h("th", { scope: "row" }, "Gemiddelde"), gemCellen.slice(0, toets.onderdelen.length), gemCellen[gemCellen.length - 2], gemCellen[gemCellen.length - 1])));
   let wisZeker = false;
@@ -1099,8 +1144,8 @@ function toonToets(doel, toets) {
           catch (e) { toast("Kopiëren lukte niet"); }
         } }, "📋 Kopiëren"),
         h("button", { class: "knop secundair", onclick: () => openToetsVenster(toets) }, "✏️ Aanpassen"))),
-    ll.length ? h("div", { class: "tabelvak" }, tabel)
-      : h("p", {}, "Er zitten nog geen leerlingen in de " + E.GROEPEN[toets.groep].toLowerCase() + ". ", h("button", { class: "linkknop", onclick: () => gaNaar("leerlingen") }, "Leerlingen beheren")),
+    ...(ll.length ? [legende(), h("div", { class: "tabelvak" }, tabel)]
+      : [h("p", {}, "Er zitten nog geen leerlingen in de " + E.GROEPEN[toets.groep].toLowerCase() + ". ", h("button", { class: "linkknop", onclick: () => gaNaar("leerlingen") }, "Leerlingen beheren"))]),
     h("p", { class: "klein" }, "Typ een score en druk op Enter om naar de volgende leerling te gaan. a = afwezig, v = vrijgesteld (telt niet mee). Alles wordt meteen bewaard."),
     h("button", { class: "knop klein secundair gevaar", onclick: (e) => {
       if (!wisZeker) { wisZeker = true; e.currentTarget.textContent = "Zeker? Klik nog eens om de toets te verwijderen"; return; }
@@ -1111,20 +1156,53 @@ function toonToets(doel, toets) {
   setTimeout(() => { const eerste = invoer.find(r => r && r.some(v => !v.value)); const v = eerste ? eerste.find(x => !x.value) : null; if (v && matchMedia("(pointer: fine)").matches) v.focus(); }, 0);
 }
 
+// ----- Klasoverzicht per vak: leerlingen × toetsen -----
+function toonKlasoverzicht(doel, vak) {
+  const ko = E.klasoverzicht(D.data(), vak);
+  const info = E.VAKKEN[vak];
+  const kop = h("tr", {}, h("th", { class: "n" }, "Leerling"),
+    ko.toetsen.map(t => h("th", { title: t.titel + " (" + datumKort(t.datum) + ")" },
+      h("button", { class: "linkknop kolomkop", onclick: () => gaNaar("toets", t.id) }, h("span", { class: "kolomdatum" }, datumKort(t.datum)), h("span", { class: "kolomtitel" }, t.titel)))),
+    h("th", {}, "Gemiddeld"));
+  const rijen = ko.rijen.map(r => h("tr", {},
+    h("th", { class: "n", scope: "row" }, h("button", { class: "linkknop", onclick: () => gaNaar("leerling", r.leerling.id) }, r.leerling.naam)),
+    r.cellen.map((c, i) => {
+      const t = ko.toetsen[i];
+      if (!c) return h("td", { class: "cel niet", title: "Niet in de groep van deze toets" }, "");
+      if (c.status === "leeg") return h("td", { class: "cel open", title: "Nog geen punten" }, h("button", { class: "celknop", onclick: () => gaNaar("toets", t.id), "aria-label": "Punten invullen voor " + t.titel }, "+"));
+      if (c.procent == null) return h("td", { class: "cel niv-geen" }, c.status === "afw" ? "afw" : "vrij");
+      const n = E.niveau(c.procent, grenzen());
+      return h("td", { class: "cel niv-" + n, title: r.leerling.naam + ", " + t.titel + ": " + E.toonScore(c.totaal) + "/" + E.toonScore(c.max) + " (" + E.NIVEAUS[n].naam.toLowerCase() + ")" },
+        h("span", { class: "niv-icoon", "aria-hidden": "true" }, E.NIVEAUS[n].icoon), c.procent + "%");
+    }),
+    h("td", { class: "gem-cel" }, r.gemiddelde != null ? niveauLabel(r.gemiddelde) : h("span", { class: "klein" }, "–"), trendTeken(r.trend))));
+  doel.replaceChildren(
+    terugKnop(),
+    h("div", { class: "nu-kop" }, h("div", {}, h("h2", {}, "Klasoverzicht " + info.naam.toLowerCase().replace("wo", "WO")),
+      h("div", { class: "klein" }, E.GROEPEN[info.groep] + ", " + ko.toetsen.length + (ko.toetsen.length === 1 ? " toets" : " toetsen")))),
+    legende(),
+    ko.toetsen.length && ko.rijen.length
+      ? h("div", { class: "tabelvak" }, h("table", { class: "klastabel" }, h("thead", {}, kop), h("tbody", {}, rijen)))
+      : h("p", { class: "klein" }, "Nog geen toetsen of leerlingen voor " + info.naam.toLowerCase() + "."),
+    h("p", { class: "klein" }, "Pijltje = trend: het laatste resultaat tegenover de vorige toetsen (↗ beter, ↘ minder, → gelijk). Klik op een toets of leerling voor details."));
+}
+
 // ----- Overzicht per leerling -----
 function toonLeerling(doel, l) {
   const ov = E.overzichtLeerling(D.data(), l.id);
   const blokken = Object.entries(E.VAKKEN).map(([vak, info]) => {
     const o = ov[vak];
     return h("section", { class: "kaart" },
-      h("header", {}, h("h3", {}, info.naam), o.gemiddelde != null ? h("span", { class: "klein" }, "gemiddeld " + o.gemiddelde + "%") : null),
+      h("header", {}, h("h3", {}, info.naam),
+        o.gemiddelde != null ? h("span", { class: "klein" }, "gemiddeld ") : null, o.gemiddelde != null ? niveauLabel(o.gemiddelde) : null,
+        trendTeken(E.trend(o.rijen.map(r => r.res.procent)))),
       o.rijen.length ? h("table", { class: "overzichttabel" },
         h("thead", {}, h("tr", {}, h("th", {}, "Datum"), h("th", {}, "Toets"), h("th", {}, "Score"), h("th", {}, "Resultaat"))),
         h("tbody", {}, o.rijen.map(({ toets, res }) => h("tr", {},
           h("td", { class: "tijd" }, datumKort(toets.datum)),
           h("td", {}, h("button", { class: "linkknop", onclick: () => gaNaar("toets", toets.id) }, toets.titel)),
           h("td", {}, res.totaal != null ? E.toonScore(res.totaal) + "/" + E.toonScore(res.max) : ""),
-          h("td", {}, res.procent != null ? procentStaaf(res.procent, toets.titel + ": " + res.procent + "%") : h("span", { class: "klein" }, procentTekst(res)))))))
+          h("td", {}, res.procent != null ? procentStaaf(res.procent, toets.titel + ": " + res.procent + "%") : h("span", { class: "niveau niv-geen" }, procentTekst(res)))))))
         : h("p", { class: "klein" }, "Nog geen toetsen."));
   });
   doel.replaceChildren(

@@ -111,3 +111,46 @@ export function alsTabel(g, toets) {
   });
   return [kop, ...rijen].map(r => r.join("\t")).join("\n");
 }
+
+// ---------- Resultaatniveaus ----------
+export const STANDAARD_GRENZEN = { sterk: 80, goed: 65, aandacht: 50 };
+export const NIVEAUS = {
+  sterk: { naam: "Sterk", icoon: "★" },
+  goed: { naam: "Goed", icoon: "✓" },
+  aandacht: { naam: "Aandacht", icoon: "⚠" },
+  zorg: { naam: "Zorg", icoon: "!" }
+};
+export function niveau(procent, grenzen = STANDAARD_GRENZEN) {
+  if (procent == null) return null;
+  if (procent >= grenzen.sterk) return "sterk";
+  if (procent >= grenzen.goed) return "goed";
+  if (procent >= grenzen.aandacht) return "aandacht";
+  return "zorg";
+}
+
+// Trend: laatste resultaat tegenover het gemiddelde van de (hoogstens 3) vorige
+export function trend(procenten) {
+  const p = procenten.filter(x => x != null);
+  if (p.length < 2) return null;
+  const laatste = p[p.length - 1];
+  const vorige = p.slice(-4, -1);
+  const gem = vorige.reduce((a, b) => a + b, 0) / vorige.length;
+  return laatste - gem >= 5 ? "op" : gem - laatste >= 5 ? "neer" : "gelijk";
+}
+
+// Klasoverzicht van één vak: leerlingen × toetsen (oudste toets links)
+export function klasoverzicht(g, vak) {
+  const ts = toetsen(g).filter(t => t.vak === vak).reverse();
+  const groep = VAKKEN[vak].groep;
+  const ll = leerlingen(g).filter(l => l.groepen.includes(groep) || ts.some(t => t.scores[l.id] && Object.keys(t.scores[l.id]).length));
+  const rijen = ll.map(l => {
+    const cellen = ts.map(t => {
+      const inToets = l.groepen.includes(t.groep) || (t.scores[l.id] && Object.keys(t.scores[l.id]).length);
+      return inToets ? resultaat(t, l.id) : null;
+    });
+    const pr = cellen.map(c => c && c.procent);
+    const geldig = pr.filter(x => x != null);
+    return { leerling: l, cellen, gemiddelde: geldig.length ? Math.round(geldig.reduce((a, b) => a + b, 0) / geldig.length) : null, trend: trend(pr) };
+  });
+  return { toetsen: ts, rijen };
+}

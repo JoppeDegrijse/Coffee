@@ -379,3 +379,36 @@ input[type=time] { padding: 8px 10px; border: 1px solid var(--lijn); border-radi
 .overnemen { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
 .overnemen .knop { margin: 0; }
 .vorige-paneel .lesinhoud { grid-template-columns: 1fr; }
+.verbindbalk {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 70;
+  background: var(--accent); color: var(--oppervlak); border: 0; border-radius: 999px; padding: 10px 18px;
+  font: inherit; font-weight: 700; box-shadow: 0 8px 24px rgba(0, 0, 0, .25); cursor: pointer;
+}
+
+/* ---------- Feestje bij afvinken ---------- */
+.feestlaag { position: fixed; inset: 0; pointer-events: none; z-index: 80; overflow: hidden; }
+.deeltje { position: absolute; width: 9px; height: 9px; border-radius: 50%; will-change: transform, opacity; }
+.deeltje.emoji { width: auto; height: auto; background: none; font-size: 18px; line-height: 1; }
+.todo input[type=checkbox].pop { animation: vinkpop .45s cubic-bezier(.3, 1.8, .5, 1); }
+@keyframes vinkpop { 0% { transform: scale(1); } 40% { transform: scale(1.6) rotate(-8deg); } 100% { transform: scale(1); } }
+.todo.afvinken .todo-tekst {
+  color: var(--tekst-zacht);
+  background: linear-gradient(currentColor, currentColor) no-repeat 0 55% / 0 2px;
+  animation: doorstreep .35s .05s ease-out forwards;
+}
+@keyframes doorstreep { to { background-size: 100% 2px; } }
+.todo.afvinken { animation: wegschuif .3s .45s ease-in forwards; }
+@keyframes wegschuif { to { opacity: .35; transform: translateX(8px); } }
+.toast {
+  position: fixed; left: 50%; bottom: 24px; z-index: 90; transform: translate(-50%, 0);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: var(--kopbalk); color: var(--kopbalk-tekst); padding: 12px 22px; border-radius: 18px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .3); animation: toastIn .45s cubic-bezier(.3, 1.6, .5, 1);
+  transition: opacity .4s, transform .4s;
+}
+.toast strong { font-family: var(--titel); font-size: 1.1rem; }
+.toast span { font-size: .88rem; opacity: .85; }
+.toast.groot { padding: 16px 28px; background: var(--karamel); color: #241a15; }
+.toast.groot strong { font-size: 1.3rem; }
+.toast.weg { opacity: 0; transform: translate(-50%, 12px); }
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 30px) scale(.9); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }

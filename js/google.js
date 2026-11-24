@@ -7,6 +7,9 @@ export const MAP_TYPE = "application/vnd.google-apps.folder";
 export const DOC_TYPE = "application/vnd.google-apps.document";
 export const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const TOKEN_SLEUTEL = "coffee_token";
+const HINT_SLEUTEL = "coffee_account";   // je e-mailadres, zodat Google niet telkens vraagt welk account
+// localStorage: de sleutel blijft bewaard als je het tabblad of de browser sluit (tot hij na ± 1 uur verloopt)
+const bewaar = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, typeof v === "string" ? v : JSON.stringify(v)); } catch (e) { /* privémodus */ } };
 
 let tokenClient = null;
 let token = null;          // { access_token, verloopt }
@@ -25,9 +28,11 @@ function wachtOpGoogle() {
 
 export async function initAanmelden(clientId) {
   await wachtOpGoogle();
+  const hint = localStorage.getItem(HINT_SLEUTEL) || undefined;
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: clientId,
     scope: SCOPES.join(" "),
+    login_hint: hint,
     callback: (resp) => {
       const w = wachtend; wachtend = null;
       if (!w) return;
@@ -35,8 +40,8 @@ export async function initAanmelden(clientId) {
       if (!google.accounts.oauth2.hasGrantedAllScopes(resp, ...SCOPES)) {
         return w.reject(new AanmeldFout("Je gaf niet alle toestemmingen. Vink zowel Drive als Docs aan."));
       }
-      token = { access_token: resp.access_token, verloopt: Date.now() + (resp.expires_in - 120) * 1000 };
-      try { sessionStorage.setItem(TOKEN_SLEUTEL, JSON.stringify(token)); } catch (e) { /* privémodus */ }
+      token = { access_token: resp.access_token, verloopt: Date.now() + (Number(resp.expires_in) - 120) * 1000 };
+      bewaar(TOKEN_SLEUTEL, token);
       w.resolve();
     },
     error_callback: (err) => {
@@ -49,32 +54,41 @@ export async function initAanmelden(clientId) {
     }
   });
   try {
-    const t = JSON.parse(sessionStorage.getItem(TOKEN_SLEUTEL) || "null");
+    const t = JSON.parse(localStorage.getItem(TOKEN_SLEUTEL) || sessionStorage.getItem(TOKEN_SLEUTEL) || "null");
     if (t && t.verloopt > Date.now()) token = t;
   } catch (e) { /* geen bewaard token */ }
 }
 
 export function isAangemeld() { return !!token && token.verloopt > Date.now(); }
+export function wasAangemeld() { return !!localStorage.getItem(HINT_SLEUTEL); }
+// Minuten tot de sleutel verloopt (negatief = al verlopen)
+export function minutenGeldig() { return token ? (token.verloopt - Date.now()) / 60000 : -1; }
+export function onthoudAccount(email) { if (email) bewaar(HINT_SLEUTEL, email); }
 
-// Moet vanuit een klik gebeuren (Google opent een pop-up)
+// Moet vanuit een klik gebeuren (Google opent een venstertje; als je al toestemming gaf, sluit het meteen weer)
+let bezigMetAanmelden = null;
 export function meldAan() {
-  return new Promise((resolve, reject) => {
+  if (bezigMetAanmelden) return bezigMetAanmelden;
+  bezigMetAanmelden = new Promise((resolve, reject) => {
     wachtend = { resolve, reject };
-    tokenClient.requestAccessToken({ prompt: "" });
-  });
+    const hint = localStorage.getItem(HINT_SLEUTEL);
+    tokenClient.requestAccessToken(hint ? { prompt: "", login_hint: hint } : { prompt: "" });
+  }).finally(() => { bezigMetAanmelden = null; });
+  return bezigMetAanmelden;
 }
 
 export function meldAf() {
   if (token) google.accounts.oauth2.revoke(token.access_token, () => {});
   token = null;
-  sessionStorage.removeItem(TOKEN_SLEUTEL);
+  bewaar(TOKEN_SLEUTEL, null);
+  bewaar(HINT_SLEUTEL, null);
 }
 
 // ---------- API ----------
 async function verzoek(url, opties = {}) {
   if (!isAangemeld()) throw new AanmeldFout("Je aanmelding is verlopen.");
   const r = await fetch(url, { ...opties, headers: { ...(opties.headers || {}), Authorization: "Bearer " + token.access_token } });
-  if (r.status === 401) { token = null; sessionStorage.removeItem(TOKEN_SLEUTEL); throw new AanmeldFout("Je aanmelding is verlopen."); }
+  if (r.status === 401) { token = null; bewaar(TOKEN_SLEUTEL, null); throw new AanmeldFout("Je aanmelding is verlopen."); }
   if (!r.ok) {
     let detail = "";
     try { detail = (await r.json()).error.message; } catch (e) { /* geen JSON */ }

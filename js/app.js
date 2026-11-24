@@ -606,7 +606,18 @@ function wijzigTodo(id, fn) {
 function todoItem(t, opties = {}) {
   const li = h("li", { class: "todo" + (t.klaar ? " klaar" : "") });
   const vink = h("input", { type: "checkbox", "aria-label": "Klaar", checked: t.klaar || null });
-  vink.addEventListener("change", () => wijzigTodo(t.id, x => { x.klaar = vink.checked; }));
+  vink.addEventListener("change", () => {
+    if (!vink.checked) { wijzigTodo(t.id, x => { x.klaar = false; x.klaarOp = null; }); return; }
+    // eerst feest, dan pas de lijst bijwerken (anders verdwijnt het item midden in de animatie)
+    const iso = W.isoDatum(nu());
+    const vandaagKlaar = todos().filter(x => x.klaar && x.klaarOp && W.isoDatum(new Date(x.klaarOp)) === iso).length + 1;
+    const nogOpenVandaag = todos().filter(x => !x.klaar && x.id !== t.id && x.gepland && x.gepland.datum === iso).length;
+    const blokLeeg = t.gepland && T.inBlok(todos(), t.gepland.datum, t.gepland.start, t.gepland.soort).filter(x => !x.klaar && x.id !== t.id).length === 0;
+    const allesKlaar = t.gepland && t.gepland.datum === iso && nogOpenVandaag === 0;
+    li.classList.add("afvinken");
+    vier(vink, allesKlaar ? 2 : blokLeeg ? 1 : 0, vandaagKlaar);
+    setTimeout(() => wijzigTodo(t.id, x => { x.klaar = true; x.klaarOp = Date.now(); }), 700);
+  });
   const tekst = h("span", { class: "todo-tekst", tabindex: "0", title: "Klik om aan te passen" }, ...metLinks(t.tekst));
   const bewerk = () => {
     const veld = h("input", { type: "text", value: t.tekst });
@@ -645,6 +656,60 @@ function todoItem(t, opties = {}) {
       onclick: () => wijzigTodo(t.id, x => { x.gepland = null; }) }, "✕"));
   }
   return li;
+}
+
+// ---------- Feestje bij een afgevinkte to-do ----------
+const AANMOEDIGING = [
+  "Afgevinkt! ☕", "Weer eentje minder!", "Lekker bezig!", "Die is van tafel!", "Vers gezet, snel gedaan!",
+  "Zo gaat dat!", "Check! ✓", "Hop, volgende!", "Dat smaakt naar meer!", "Opgeruimd staat netjes!"
+];
+const DEELTJES = ["☕", "✨", "⭐", "🤎", "✓"];
+const KLEUREN = ["#c08a55", "#6b4226", "#e9c49a", "#f7e7bf", "#3d7a37", "#d9a46c"];
+
+// niveau 0 = gewone to-do, 1 = blok leeg, 2 = alles van vandaag klaar
+function vier(bron, niveau, aantalVandaag) {
+  const minderBeweging = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const r = bron.getBoundingClientRect();
+  const x0 = r.left + r.width / 2, y0 = r.top + r.height / 2;
+  if (!minderBeweging) {
+    bron.classList.remove("pop"); void bron.offsetWidth; bron.classList.add("pop");
+    const aantal = [26, 44, 80][niveau];
+    const laag = h("div", { class: "feestlaag", "aria-hidden": "true" });
+    document.body.appendChild(laag);
+    for (let i = 0; i < aantal; i++) {
+      const emoji = Math.random() < 0.35;
+      const d = h("span", { class: "deeltje" + (emoji ? " emoji" : "") }, emoji ? DEELTJES[Math.floor(Math.random() * DEELTJES.length)] : "");
+      if (!emoji) {
+        d.style.background = KLEUREN[Math.floor(Math.random() * KLEUREN.length)];
+        if (Math.random() < 0.5) d.style.borderRadius = "2px";
+      }
+      d.style.left = x0 + "px"; d.style.top = y0 + "px";
+      laag.appendChild(d);
+      const hoek = Math.random() * Math.PI * 2;
+      const kracht = (60 + Math.random() * 120) * (1 + niveau * 0.6);
+      const dx = Math.cos(hoek) * kracht, dy = Math.sin(hoek) * kracht - 60 - niveau * 40;
+      const draai = (Math.random() - 0.5) * 720;
+      d.animate([
+        { transform: "translate(-50%, -50%) scale(.4)", opacity: 1 },
+        { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) rotate(${draai / 2}deg) scale(1)`, opacity: 1, offset: 0.45 },
+        { transform: `translate(calc(-50% + ${dx * 1.25}px), calc(-50% + ${dy + 160 + niveau * 60}px)) rotate(${draai}deg) scale(.8)`, opacity: 0 }
+      ], { duration: 900 + Math.random() * 500 + niveau * 250, easing: "cubic-bezier(.15,.7,.35,1)", fill: "forwards" });
+    }
+    setTimeout(() => laag.remove(), 2200);
+  }
+  const tekst = niveau === 2 ? "Alles van vandaag is klaar! 🎉"
+    : niveau === 1 ? "Dit blok is helemaal klaar! 🙌"
+    : AANMOEDIGING[Math.floor(Math.random() * AANMOEDIGING.length)];
+  toast(tekst, aantalVandaag > 1 ? aantalVandaag + " to-do's afgevinkt vandaag" + (aantalVandaag >= 5 ? " 🔥" : "") : null, niveau);
+}
+
+function toast(hoofd, sub, niveau = 0) {
+  document.querySelectorAll(".toast").forEach(t => t.remove());
+  const t = h("div", { class: "toast" + (niveau ? " groot" : ""), role: "status", "aria-live": "polite" },
+    h("strong", {}, hoofd), sub ? h("span", {}, sub) : null);
+  document.body.appendChild(t);
+  setTimeout(() => t.classList.add("weg"), 2400);
+  setTimeout(() => t.remove(), 2900);
 }
 
 function snelToevoegen(plaatshouder, gepland = null) {
@@ -1126,7 +1191,7 @@ function startScherm(boodschap) {
       h("h1", {}, "Coffee!"),
       h("p", {}, "Je lesdag in één oogopslag."),
       boodschap ? h("div", { class: "melding fout" }, boodschap) : null,
-      h("button", { class: "knop groot", onclick: () => start(true) }, "Aanmelden met Google"),
+      h("button", { class: "knop groot", onclick: () => start(true) }, G.wasAangemeld() ? "Verder met Coffee! ☕" : "Aanmelden met Google"),
       h("p", { class: "klein" }, h("a", { href: "#", onclick: (e) => { e.preventDefault(); staat.weergave = "instellingen"; toon(); } }, "Instellingen")))
   );
 }
@@ -1141,6 +1206,7 @@ async function start(viaKlik) {
     }
     $("app").replaceChildren(h("div", { class: "startscherm" }, h("div", { class: "beker draait" }, "☕"), h("p", {}, "Agenda zetten…")));
     staat.gebruiker = await G.gebruiker();
+    G.onthoudAccount(staat.gebruiker.emailAddress);
     await D.laad();
     if (!staat.inst.map) {
       try { staat.inst.map = await G.zoekPad(STANDAARD_PAD); bewaarInstellingen(); } catch (e) { /* zelf instellen */ }
@@ -1159,7 +1225,29 @@ setInterval(() => {
       !(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) toon();
 }, 30000);
 
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") D.ververs(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { D.ververs(); toonVerbindBalk(); } });
+
+// ---------- Ingelogd blijven ----------
+// Google geeft een sleutel die ± 1 uur geldig is. Nadert het einde, dan vernieuwt Coffee! hem bij je volgende klik
+// (een venstertje van Google flitst dan even open en dicht). Is hij toch verlopen, dan volstaat één klik op de balk.
+let laatsteVernieuwing = 0;
+document.addEventListener("click", () => {
+  if (!G.wasAangemeld() || !staat.gebruiker) return;
+  const min = G.minutenGeldig();
+  if (min > 15 || Date.now() - laatsteVernieuwing < 60000) return;
+  laatsteVernieuwing = Date.now();
+  G.meldAan().then(() => { verbergVerbindBalk(); if (min <= 0) toon(); }).catch(() => toonVerbindBalk());
+}, true);
+
+function verbergVerbindBalk() { const b = document.querySelector(".verbindbalk"); if (b) b.remove(); }
+function toonVerbindBalk() {
+  if (!staat.gebruiker || G.isAangemeld() || document.querySelector(".verbindbalk")) return;
+  document.body.appendChild(h("button", { class: "verbindbalk", onclick: async (e) => {
+    e.stopPropagation();
+    try { await G.meldAan(); verbergVerbindBalk(); toon(); } catch (x) { /* blijft staan */ }
+  } }, "☕ Klik om verder te werken (je Google-verbinding is verlopen)"));
+}
+setInterval(toonVerbindBalk, 60000);
 
 pasThemaToe();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", pasThemaToe);

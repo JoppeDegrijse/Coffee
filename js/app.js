@@ -4,6 +4,7 @@ import * as W from "./weken.js";
 import * as B from "./bewerken.js";
 import * as T from "./todo.js";
 import * as D from "./gegevens.js";
+import * as E from "./evaluatie.js";
 
 // ---------- Instellingen (in deze browser) ----------
 const INST_SLEUTEL = "coffee_instellingen";
@@ -840,6 +841,280 @@ async function toonTodo(doel) {
   setTimeout(() => { const v = doel.querySelector("input.snel"); if (v && matchMedia("(pointer: fine)").matches) v.focus(); }, 0);
 }
 
+// ---------- Evaluatie ----------
+const ev = { scherm: "lijst", id: null, vak: "alle" };   // scherm: lijst | toets | leerling | leerlingen
+const lijst = (g, k) => (g[k] = g[k] || []);
+const gaNaar = (scherm, id = null) => { ev.scherm = scherm; ev.id = id; toon(); window.scrollTo(0, 0); };
+const terugKnop = () => h("button", { class: "knop klein secundair terug", onclick: () => gaNaar("lijst") }, "← Evaluatie");
+const procentTekst = (r) => r.procent != null ? r.procent + "%" : r.status === "afw" ? "afwezig" : r.status === "vrij" ? "vrijgesteld" : "";
+const datumKort = (iso) => datumTekst(W.vanIso(iso), { weekday: "short", day: "numeric", month: "short" });
+
+// Staafje: lengte = percentage (één kleur), getal staat er altijd bij; onder 50 % een ⚠
+function procentStaaf(procent, titel) {
+  if (procent == null) return h("span", { class: "klein" }, "–");
+  return h("span", { class: "staaf-rij", title: titel || procent + "%" },
+    h("span", { class: "staaf" }, h("span", { style: "width:" + Math.min(100, procent) + "%" })),
+    h("span", { class: "staaf-getal" }, (procent < 50 ? "⚠ " : "") + procent + "%"));
+}
+
+function toonEvaluatie(doel) {
+  const g = D.data();
+  if (ev.scherm === "toets") { const t = (g.toetsen || []).find(x => x.id === ev.id && !x.verwijderd); if (t) return toonToets(doel, t); }
+  if (ev.scherm === "leerling") { const l = (g.leerlingen || []).find(x => x.id === ev.id && !x.verwijderd); if (l) return toonLeerling(doel, l); }
+  if (ev.scherm === "leerlingen") return toonLeerlingenBeheer(doel);
+  ev.scherm = "lijst";
+  const ll = E.leerlingen(g);
+  doel.replaceChildren(...[
+    h("div", { class: "nu-kop" }, h("h2", {}, "Evaluatie"),
+      h("div", { class: "knoppen" },
+        h("button", { class: "knop secundair", onclick: () => gaNaar("leerlingen") }, "👥 Leerlingen"),
+        ll.length ? h("button", { class: "knop", onclick: () => openToetsVenster() }, "＋ Nieuwe toets") : null)),
+    !ll.length ? h("div", { class: "kaart leeg-staat" },
+      h("h3", {}, "Begin met je leerlingen"),
+      h("p", {}, "Voeg je leerlingen toe en duid aan wie in je klasgroep, taalgroep en rekengroep zit. Daarna kun je toetsen aanmaken en punten invoeren."),
+      h("button", { class: "knop", onclick: () => gaNaar("leerlingen") }, "Leerlingen toevoegen")) : null,
+    ll.length ? levendVak(() => {
+      const alle = E.toetsen(D.data());
+      const filter = h("div", { class: "filter", role: "group", "aria-label": "Vak" },
+        [["alle", "Alle vakken"], ...Object.entries(E.VAKKEN).map(([k, v]) => [k, v.naam])].map(([k, naam]) =>
+          h("button", { class: "filterknop" + (ev.vak === k ? " actief" : ""), "aria-pressed": ev.vak === k ? "true" : "false",
+            onclick: () => { ev.vak = k; toon(); } }, naam)));
+      const zichtbaar = alle.filter(t => ev.vak === "alle" || t.vak === ev.vak);
+      return [
+        h("h3", { class: "sectie" }, "Toetsen"), filter,
+        zichtbaar.length ? h("div", { class: "toetslijst" }, zichtbaar.map(t => {
+          const st = E.statistiek(D.data(), t);
+          return h("button", { class: "toetsrij", onclick: () => gaNaar("toets", t.id) },
+            h("span", { class: "tijd" }, datumKort(t.datum)),
+            h("span", { class: "vak" }, E.VAKKEN[t.vak].naam),
+            h("span", { class: "toetsnaam" }, t.titel),
+            h("span", { class: "klein" }, st.ingevuld + "/" + st.aantal + " ingevuld"),
+            procentStaaf(st.gemiddelde, "Gemiddelde: " + (st.gemiddelde == null ? "nog geen punten" : st.gemiddelde + "%")));
+        })) : h("p", { class: "klein" }, alle.length ? "Geen toetsen voor dit vak." : "Nog geen toetsen. Maak je eerste toets aan met ＋ Nieuwe toets."),
+        h("h3", { class: "sectie" }, "Per leerling"),
+        h("div", { class: "leerlingknoppen" }, E.leerlingen(D.data()).map(l =>
+          h("button", { class: "knop secundair", onclick: () => gaNaar("leerling", l.id) }, l.naam)))
+      ];
+    }) : null
+  ].filter(Boolean));
+}
+
+// ----- Leerlingen beheren -----
+function toonLeerlingenBeheer(doel) {
+  const namen = h("textarea", { rows: 4, placeholder: "Eén naam per lijn (voornaam of initialen volstaat)" });
+  const kies = Object.fromEntries(Object.keys(E.GROEPEN).map(k => [k, h("input", { type: "checkbox", checked: k === "klas" || null })]));
+  doel.replaceChildren(
+    terugKnop(),
+    h("div", { class: "nu-kop" }, h("h2", {}, "Leerlingen")),
+    h("p", { class: "klein" }, "Deze lijst staat enkel in je eigen Drive (map Coffee!). Voornamen of initialen volstaan."),
+    h("div", { class: "kaart" },
+      h("h3", {}, "Leerlingen toevoegen"),
+      namen,
+      h("div", { class: "groepkeuze" }, Object.entries(E.GROEPEN).map(([k, naam]) => h("label", {}, kies[k], " " + naam))),
+      h("button", { class: "knop", onclick: () => {
+        const lijnen = namen.value.split("\n").map(x => x.trim()).filter(Boolean);
+        if (!lijnen.length) return;
+        const groepen = Object.keys(kies).filter(k => kies[k].checked);
+        D.wijzig(g => lijnen.forEach(n => lijst(g, "leerlingen").push(E.nieuweLeerling(n, groepen))));
+        namen.value = "";
+        toast(lijnen.length === 1 ? "Leerling toegevoegd" : lijnen.length + " leerlingen toegevoegd");
+      } }, "Toevoegen")),
+    levendVak(() => {
+      const ll = E.leerlingen(D.data());
+      if (!ll.length) return h("p", { class: "klein" }, "Nog geen leerlingen.");
+      return h("div", { class: "tabelvak" }, h("table", { class: "leerlingtabel" },
+        h("thead", {}, h("tr", {}, h("th", {}, "Naam"), Object.values(E.GROEPEN).map(n => h("th", {}, n)), h("th", {}, ""))),
+        h("tbody", {}, ll.map(l => {
+          const naam = h("input", { type: "text", value: l.naam, "aria-label": "Naam" });
+          naam.addEventListener("change", () => { if (naam.value.trim()) D.wijzig(g => { const x = g.leerlingen.find(y => y.id === l.id); x.naam = naam.value.trim(); x.gewijzigd = Date.now(); }); });
+          return h("tr", {},
+            h("td", {}, naam),
+            Object.keys(E.GROEPEN).map(k => {
+              const c = h("input", { type: "checkbox", checked: l.groepen.includes(k) || null, "aria-label": E.GROEPEN[k] + " " + l.naam });
+              c.addEventListener("change", () => D.wijzig(g => {
+                const x = g.leerlingen.find(y => y.id === l.id);
+                x.groepen = c.checked ? [...new Set([...x.groepen, k])] : x.groepen.filter(y => y !== k);
+                x.gewijzigd = Date.now();
+              }));
+              return h("td", { class: "midden" }, c);
+            }),
+            h("td", {}, h("button", { class: "knop klein secundair gevaar", onclick: (e) => {
+              const knop = e.currentTarget;
+              if (knop.dataset.zeker) { D.wijzig(g => { const x = g.leerlingen.find(y => y.id === l.id); x.verwijderd = true; x.gewijzigd = Date.now(); }); }
+              else { knop.dataset.zeker = "1"; knop.textContent = "Zeker?"; }
+            } }, "Verwijderen")));
+        }))));
+    })
+  );
+}
+
+// ----- Toets aanmaken / aanpassen -----
+function openToetsVenster(bestaand = null) {
+  const titel = h("input", { type: "text", value: bestaand ? bestaand.titel : "", placeholder: "bv. Toets breuken, dictee kern 7" });
+  const vak = h("select", {}, Object.entries(E.VAKKEN).map(([k, v]) => h("option", { value: k, selected: (bestaand ? bestaand.vak : "taal") === k || null }, v.naam)));
+  const datum = h("input", { type: "date", value: bestaand ? bestaand.datum : W.isoDatum(nu()) });
+  const groep = h("select", {}, Object.entries(E.GROEPEN).map(([k, n]) => h("option", { value: k }, n)));
+  groep.value = bestaand ? bestaand.groep : E.VAKKEN[vak.value].groep;
+  let groepAangepast = !!bestaand;
+  groep.addEventListener("change", () => { groepAangepast = true; });
+  vak.addEventListener("change", () => { if (!groepAangepast) groep.value = E.VAKKEN[vak.value].groep; });
+  const onderdelen = h("div", { class: "onderdelen" });
+  const voegOnderdeelToe = (o = { naam: "", max: "" }) => {
+    const rij = h("div", { class: "onderdeel", "data-id": o.id || "" },
+      h("input", { type: "text", value: o.naam, placeholder: "Onderdeel (bv. Lezen)", "aria-label": "Naam onderdeel" }),
+      h("input", { type: "text", inputmode: "decimal", value: o.max === "" ? "" : E.toonScore(o.max), placeholder: "max", "aria-label": "Maximum", class: "max" }),
+      h("button", { type: "button", class: "knop klein secundair", "aria-label": "Onderdeel verwijderen", onclick: () => { if (onderdelen.children.length > 1) rij.remove(); } }, "✕"));
+    onderdelen.appendChild(rij);
+  };
+  (bestaand ? bestaand.onderdelen : [{ naam: "Totaal", max: 20 }]).forEach(voegOnderdeelToe);
+  const melding = h("div", { class: "melding" });
+  const venster = sluitbaarVenster([
+    h("h3", {}, bestaand ? "Toets aanpassen" : "Nieuwe toets"),
+    melding,
+    h("div", { class: "formulier" },
+      h("div", { class: "veld" }, h("label", {}, "Titel"), titel),
+      h("div", { class: "rij-velden" },
+        h("div", { class: "veld" }, h("label", {}, "Vak"), vak),
+        h("div", { class: "veld" }, h("label", {}, "Datum"), datum),
+        h("div", { class: "veld" }, h("label", {}, "Groep"), groep)),
+      h("div", { class: "veld" }, h("label", {}, "Onderdelen en maximum"),
+        h("p", { class: "klein" }, "Eén onderdeel volstaat voor een gewone totaalscore."),
+        onderdelen,
+        h("button", { type: "button", class: "knop klein secundair", onclick: () => voegOnderdeelToe() }, "＋ Onderdeel"))),
+    h("div", { class: "knoppen" },
+      h("button", { class: "knop", onclick: () => {
+        const ond = [...onderdelen.children].map(r => {
+          const [n, m] = r.querySelectorAll("input");
+          return { id: r.dataset.id || undefined, naam: n.value, max: E.leesScore(m.value) };
+        });
+        if (!titel.value.trim()) { melding.className = "melding fout"; melding.textContent = "Geef de toets een titel."; return; }
+        if (ond.some(o => typeof o.max !== "number" || o.max <= 0)) { melding.className = "melding fout"; melding.textContent = "Geef elk onderdeel een maximum (bv. 10)."; return; }
+        if (bestaand) {
+          D.wijzig(g => {
+            const t = g.toetsen.find(x => x.id === bestaand.id);
+            const nieuw = E.nieuweToets({ titel: titel.value, vak: vak.value, datum: datum.value, groep: groep.value, onderdelen: ond });
+            Object.assign(t, { titel: nieuw.titel, vak: nieuw.vak, datum: nieuw.datum, groep: nieuw.groep, onderdelen: nieuw.onderdelen, gewijzigd: Date.now() });
+          });
+          venster.sluit(); toon();
+        } else {
+          const t = E.nieuweToets({ titel: titel.value, vak: vak.value, datum: datum.value || W.isoDatum(nu()), groep: groep.value, onderdelen: ond });
+          D.wijzig(g => lijst(g, "toetsen").push(t));
+          venster.sluit(); gaNaar("toets", t.id);
+        }
+      } }, bestaand ? "Opslaan" : "Toets aanmaken"),
+      h("button", { class: "knop secundair", onclick: () => venster.sluit() }, "Annuleren"))
+  ], { klein: true });
+  setTimeout(() => titel.focus(), 0);
+}
+
+// ----- Punten invoeren -----
+function toonToets(doel, toets) {
+  const g = D.data();
+  const ll = E.leerlingenVanToets(g, toets);
+  const max = E.maxVan(toets);
+  const wijzigScore = (lid, oid, waarde) => D.wijzig(gg => {
+    const t = gg.toetsen.find(x => x.id === toets.id);
+    t.scores[lid] = t.scores[lid] || {};
+    if (waarde == null) delete t.scores[lid][oid]; else t.scores[lid][oid] = waarde;
+    t.gewijzigd = Date.now();
+  });
+  const totaalCellen = {}, gemCellen = [];
+  const herbereken = () => {
+    const t = D.data().toetsen.find(x => x.id === toets.id);
+    for (const l of ll) {
+      const r = E.resultaat(t, l.id);
+      totaalCellen[l.id].tot.textContent = r.totaal != null ? E.toonScore(r.totaal) + (r.max !== max ? " /" + E.toonScore(r.max) : "") : "";
+      totaalCellen[l.id].pct.replaceChildren(r.procent != null ? procentStaaf(r.procent) : h("span", { class: "klein" }, procentTekst(r)));
+    }
+    const st = E.statistiek(D.data(), t);
+    st.perOnderdeel.forEach((w, i) => { gemCellen[i].textContent = w == null ? "" : E.toonScore(w); });
+    gemCellen[gemCellen.length - 1].replaceChildren(procentStaaf(st.gemiddelde));
+  };
+  const invoer = [];   // [rij][kolom]
+  const rijen = ll.map((l, ri) => {
+    const s = toets.scores[l.id] || {};
+    invoer[ri] = [];
+    const cellen = toets.onderdelen.map((o, ci) => {
+      const veld = h("input", { type: "text", inputmode: "decimal", class: "score", value: E.toonScore(s[o.id]), "aria-label": l.naam + ", " + o.naam + " (max " + E.toonScore(o.max) + ")", autocomplete: "off" });
+      invoer[ri][ci] = veld;
+      const bewaar = () => {
+        const w = E.leesScore(veld.value);
+        const fout = w === undefined || (typeof w === "number" && w > o.max);
+        veld.classList.toggle("fout", fout);
+        veld.title = fout ? (w === undefined ? "Typ een getal, a (afwezig) of v (vrijgesteld)" : "Meer dan het maximum (" + E.toonScore(o.max) + ")") : "";
+        if (fout) return;
+        if (w !== s[o.id]) { s[o.id] = w; wijzigScore(l.id, o.id, w); herbereken(); }
+      };
+      veld.addEventListener("change", bewaar);
+      veld.addEventListener("blur", bewaar);
+      veld.addEventListener("focus", () => veld.select());
+      veld.addEventListener("keydown", (e) => {
+        const ga = (r, c) => { const v = invoer[r] && invoer[r][c]; if (v) { e.preventDefault(); bewaar(); v.focus(); } };
+        if (e.key === "Enter" || e.key === "ArrowDown") ga(ri + 1, ci);
+        else if (e.key === "ArrowUp") ga(ri - 1, ci);
+        else if (e.key === "ArrowRight" && veld.selectionStart === veld.value.length) ga(ri, ci + 1);
+        else if (e.key === "ArrowLeft" && veld.selectionStart === 0) ga(ri, ci - 1);
+      });
+      return h("td", {}, veld);
+    });
+    totaalCellen[l.id] = { tot: h("td", { class: "totaal" }), pct: h("td", { class: "pct" }) };
+    return h("tr", {}, h("th", { scope: "row" }, h("button", { class: "linkknop", onclick: () => gaNaar("leerling", l.id) }, l.naam)),
+      cellen, totaalCellen[l.id].tot, totaalCellen[l.id].pct);
+  });
+  toets.onderdelen.forEach(() => gemCellen.push(h("td", { class: "gem" })));
+  gemCellen.push(h("td", { class: "gem" }));   // totaal (leeg)
+  gemCellen.push(h("td", { class: "gem pct" }));
+  const tabel = h("table", { class: "puntentabel" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Leerling"),
+      toets.onderdelen.map(o => h("th", {}, o.naam, h("span", { class: "max" }, "/" + E.toonScore(o.max)))),
+      h("th", {}, "Totaal", h("span", { class: "max" }, "/" + E.toonScore(max))), h("th", {}, "%"))),
+    h("tbody", {}, rijen),
+    h("tfoot", {}, h("tr", {}, h("th", { scope: "row" }, "Gemiddelde"), gemCellen.slice(0, toets.onderdelen.length), gemCellen[gemCellen.length - 2], gemCellen[gemCellen.length - 1])));
+  let wisZeker = false;
+  doel.replaceChildren(
+    terugKnop(),
+    h("div", { class: "nu-kop" },
+      h("div", {}, h("h2", {}, toets.titel), h("div", { class: "klein" }, E.VAKKEN[toets.vak].naam + ", " + datumKort(toets.datum) + ", " + E.GROEPEN[toets.groep].toLowerCase())),
+      h("div", { class: "knoppen" },
+        h("button", { class: "knop secundair", onclick: async () => {
+          try { await navigator.clipboard.writeText(E.alsTabel(D.data(), D.data().toetsen.find(x => x.id === toets.id))); toast("Gekopieerd", "Plak in Google Sheets, Docs of Excel"); }
+          catch (e) { toast("Kopiëren lukte niet"); }
+        } }, "📋 Kopiëren"),
+        h("button", { class: "knop secundair", onclick: () => openToetsVenster(toets) }, "✏️ Aanpassen"))),
+    ll.length ? h("div", { class: "tabelvak" }, tabel)
+      : h("p", {}, "Er zitten nog geen leerlingen in de " + E.GROEPEN[toets.groep].toLowerCase() + ". ", h("button", { class: "linkknop", onclick: () => gaNaar("leerlingen") }, "Leerlingen beheren")),
+    h("p", { class: "klein" }, "Typ een score en druk op Enter om naar de volgende leerling te gaan. a = afwezig, v = vrijgesteld (telt niet mee). Alles wordt meteen bewaard."),
+    h("button", { class: "knop klein secundair gevaar", onclick: (e) => {
+      if (!wisZeker) { wisZeker = true; e.currentTarget.textContent = "Zeker? Klik nog eens om de toets te verwijderen"; return; }
+      D.wijzig(gg => { const t = gg.toetsen.find(x => x.id === toets.id); t.verwijderd = true; t.gewijzigd = Date.now(); });
+      gaNaar("lijst");
+    } }, "Toets verwijderen"));
+  herbereken();
+  setTimeout(() => { const eerste = invoer.find(r => r && r.some(v => !v.value)); const v = eerste ? eerste.find(x => !x.value) : null; if (v && matchMedia("(pointer: fine)").matches) v.focus(); }, 0);
+}
+
+// ----- Overzicht per leerling -----
+function toonLeerling(doel, l) {
+  const ov = E.overzichtLeerling(D.data(), l.id);
+  const blokken = Object.entries(E.VAKKEN).map(([vak, info]) => {
+    const o = ov[vak];
+    return h("section", { class: "kaart" },
+      h("header", {}, h("h3", {}, info.naam), o.gemiddelde != null ? h("span", { class: "klein" }, "gemiddeld " + o.gemiddelde + "%") : null),
+      o.rijen.length ? h("table", { class: "overzichttabel" },
+        h("thead", {}, h("tr", {}, h("th", {}, "Datum"), h("th", {}, "Toets"), h("th", {}, "Score"), h("th", {}, "Resultaat"))),
+        h("tbody", {}, o.rijen.map(({ toets, res }) => h("tr", {},
+          h("td", { class: "tijd" }, datumKort(toets.datum)),
+          h("td", {}, h("button", { class: "linkknop", onclick: () => gaNaar("toets", toets.id) }, toets.titel)),
+          h("td", {}, res.totaal != null ? E.toonScore(res.totaal) + "/" + E.toonScore(res.max) : ""),
+          h("td", {}, res.procent != null ? procentStaaf(res.procent, toets.titel + ": " + res.procent + "%") : h("span", { class: "klein" }, procentTekst(res)))))))
+        : h("p", { class: "klein" }, "Nog geen toetsen."));
+  });
+  doel.replaceChildren(
+    terugKnop(),
+    h("div", { class: "nu-kop" }, h("div", {}, h("h2", {}, l.naam), h("div", { class: "klein" }, l.groepen.map(k => E.GROEPEN[k]).join(", ") || "geen groep"))),
+    ...blokken);
+}
+
 // ---------- Bewerken ----------
 const VAKKEN = ["T", "W", "WO", "GO", "SOVA", "PROJ", "Func. T", "Func. W", "Schrift", "Voorlezen", "CREA", "LO"];
 
@@ -1147,7 +1422,7 @@ function kopbalk() {
     h("div", { class: "merk" }, "☕ Coffee!"),
     staat.testtijd ? h("button", { class: "testtijd", title: "Klik om terug te keren naar de echte tijd", onclick: () => { staat.testtijd = null; toon(); } },
       "Testtijd " + datumTekst(nu(), { weekday: "short", day: "numeric", month: "short" }) + " " + W.tijdTekst(W.minutenVan(nu())) + " ✕") : null,
-    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"), todoTab(knop),
+    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"), todoTab(knop), knop("evaluatie", "Evaluatie"),
       h("button", { class: "tab thema-knop", title: THEMA_INFO[staat.inst.thema || "auto"][1] + " (klik om te wisselen)",
         "aria-label": THEMA_INFO[staat.inst.thema || "auto"][1], onclick: volgendThema }, THEMA_INFO[staat.inst.thema || "auto"][0]),
       knop("instellingen", "⚙︎"))
@@ -1165,6 +1440,7 @@ async function toon() {
     if (!staat.inst.map) { staat.weergave = "instellingen"; return toon(); }
     if (staat.weergave === "week") await toonWeek(inhoud);
     else if (staat.weergave === "todo") await toonTodo(inhoud);
+    else if (staat.weergave === "evaluatie") toonEvaluatie(inhoud);
     else await toonNu(inhoud);
   } catch (e) {
     if (mijnBeurt !== bezigMetTonen) return;

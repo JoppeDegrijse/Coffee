@@ -7,7 +7,9 @@
 
 import * as W from "./weken.js";
 
-export const LEEG = () => ({ versie: 1, todos: [] });
+// Alle lijsten in het gegevensbestand; elk item heeft een id en een tijdstip 'gewijzigd'
+export const VERZAMELINGEN = ["todos", "leerlingen", "toetsen"];
+export const LEEG = () => ({ versie: 1, todos: [], leerlingen: [], toetsen: [] });
 
 function nieuwId() {
   return (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
@@ -21,18 +23,24 @@ export function nieuweTodo(tekst, gepland = null) {
 // Twee versies samenvoegen (bv. laptop en gsm): per to-do wint de laatst gewijzigde.
 // Verwijderde to-do's blijven als "verwijderd" staan, zodat het verwijderen ook op het andere toestel doorkomt.
 export function samenvoegen(a, b) {
-  const per = new Map();
-  for (const t of [...(a.todos || []), ...(b.todos || [])]) {
-    const bestaand = per.get(t.id);
-    if (!bestaand || (t.gewijzigd || 0) > (bestaand.gewijzigd || 0)) per.set(t.id, t);
+  const uit = { ...a, ...b, versie: 1 };
+  for (const k of VERZAMELINGEN) {
+    const per = new Map();
+    for (const t of [...(a[k] || []), ...(b[k] || [])]) {
+      const bestaand = per.get(t.id);
+      if (!bestaand || (t.gewijzigd || 0) > (bestaand.gewijzigd || 0)) per.set(t.id, t);
+    }
+    uit[k] = [...per.values()];
   }
-  return { ...a, ...b, versie: 1, todos: [...per.values()] };
+  return uit;
 }
 
 // Verwijderde to-do's na 60 dagen echt opruimen
 export function opruimen(gegevens, nu = Date.now()) {
   const grens = nu - 60 * 24 * 3600 * 1000;
-  return { ...gegevens, todos: gegevens.todos.filter(t => !(t.verwijderd && (t.gewijzigd || 0) < grens)) };
+  const uit = { ...gegevens };
+  for (const k of VERZAMELINGEN) uit[k] = (gegevens[k] || []).filter(t => !(t.verwijderd && (t.gewijzigd || 0) < grens));
+  return uit;
 }
 
 export const slotSleutel = (s) => s.datum + "|" + s.start + "|" + s.soort;

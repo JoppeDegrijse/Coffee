@@ -508,7 +508,16 @@ function toonInstellingen(doel) {
         inst.clientId = id; bewaarInstellingen(); location.reload();
       } }, "Opslaan"),
       staat.gebruiker ? h("p", { class: "klein" }, "Aangemeld als " + staat.gebruiker.displayName + " (" + staat.gebruiker.emailAddress + "). ",
-        h("a", { href: "#", onclick: (e) => { e.preventDefault(); G.meldAf(); location.reload(); } }, "Afmelden")) : null
+        h("a", { href: "#", onclick: (e) => { e.preventDefault(); afmelden(); } }, "Afmelden")) : null
+    ),
+    h("section", { class: "kaart" },
+      h("h3", {}, "Privacy"),
+      h("ul", { class: "privacy" },
+        h("li", {}, "Coffee! praat enkel met Google: je agenda in Google Docs en het bestand \u201cCoffee! gegevens.json\u201d in de map Coffee! van je eigen Drive. Er is geen andere server en geen AI."),
+        h("li", {}, "De code staat op GitHub, maar bevat geen enkele naam of score. Lettertypes en hulpprogramma's zitten in Coffee! zelf."),
+        h("li", {}, "De browser mag van Coffee! nergens anders gegevens naartoe sturen dan naar Google (veiligheidsregel in de pagina)."),
+        h("li", {}, "Op dit toestel bewaart Coffee! een kopie om snel te starten. Afmelden wist die kopie; je Drive blijft ongemoeid. Gebruik je een gedeelde computer, meld dan altijd af.")),
+      staat.gebruiker ? h("button", { class: "knop secundair", onclick: afmelden }, "Afmelden en dit toestel wissen") : null
     ),
     h("section", { class: "kaart" },
       h("h3", {}, "Agendamap"),
@@ -557,6 +566,15 @@ function toonInstellingen(doel) {
     ),
     h("p", { class: "klein" }, h("a", { href: "test.html" }, "Verbindingstest openen"))
   );
+}
+
+// Afmelden: sleutel intrekken én alle Coffee!-gegevens op dit toestel wissen (je Drive blijft ongemoeid)
+async function afmelden() {
+  if (D.heeftOnbewaard()) { toast("Even geduld", "Coffee! bewaart nog je laatste wijziging"); return; }
+  G.meldAf();
+  D.wisLokaal();
+  try { sessionStorage.clear(); } catch (e) { /* niets */ }
+  location.reload();
 }
 
 function lokaal(d) {

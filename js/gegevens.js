@@ -95,3 +95,11 @@ export async function ververs() {
     return true;
   } catch (e) { return false; }
 }
+
+// Bij afmelden: de kopie op dit toestel wissen (het bestand in je Drive blijft)
+export function wisLokaal() {
+  clearTimeout(t.timer);
+  try { localStorage.removeItem(LOKAAL); } catch (e) { /* niets */ }
+  Object.assign(t, { data: T.LEEG(), id: null, basisVersie: null, vuil: false, status: "" });
+}
+export const heeftOnbewaard = () => t.vuil || t.bezig;

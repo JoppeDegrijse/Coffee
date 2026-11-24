@@ -167,7 +167,7 @@ export async function agendaBestanden(mapId) {
 // Een week uitlezen (Google Docs of Word)
 export async function leesWeekBestand(bestand) {
   if (bestand.mimeType === DOCX_TYPE) {
-    if (!window.JSZip) await laadScript("https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js");
+    if (!window.JSZip) await laadScript("js/vendor/jszip.min.js");
     const r = await verzoek(DRIVE + "files/" + bestand.id + "?alt=media&supportsAllDrives=true");
     const zip = await JSZip.loadAsync(await r.arrayBuffer());
     const documentXml = await zip.file("word/document.xml").async("string");

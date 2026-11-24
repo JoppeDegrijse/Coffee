@@ -1,15 +1,15 @@
 // Coffee! – to-do's: model, samenvoegen tussen toestellen, vrije blokken om in te plannen.
 //
 // todo = { id, tekst, klaar, deadline: "YYYY-MM-DD" | null,
-//          gepland: null | { datum: "YYYY-MM-DD", start, eind, soort: "perm"|"vrij"|"avond", titel },
+//          gepland: null | { datum: "YYYY-MM-DD", start, eind, soort: "perm"|"vrij"|"avond"|"woensdag"|"weekend", titel },
 //          aangemaakt, gewijzigd, verwijderd? }
 // gegevens = { versie: 1, todos: [todo] }
 
 import * as W from "./weken.js";
 
 // Alle lijsten in het gegevensbestand; elk item heeft een id en een tijdstip 'gewijzigd'
-export const VERZAMELINGEN = ["todos", "leerlingen", "toetsen"];
-export const LEEG = () => ({ versie: 1, todos: [], leerlingen: [], toetsen: [] });
+export const VERZAMELINGEN = ["todos", "leerlingen", "toetsen", "notities"];
+export const LEEG = () => ({ versie: 1, todos: [], leerlingen: [], toetsen: [], notities: [] });
 
 function nieuwId() {
   return (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
@@ -66,9 +66,17 @@ export function vrijeBlokken(dagenPerDatum, vanaf, aantalDagen, { zwemweek = nul
                    titel: rij.soort === "vrij" ? "LO (vrij)" : rij.titel });
       }
     }
-    // avondblok op schooldagen (maandag t.e.m. vrijdag)
     const weekdag = (datum.getDay() + 6) % 7;
-    if (avond && weekdag < 5) {
+    // woensdagnamiddag: één groot blok van 13 tot 22 u.
+    if (weekdag === 2) {
+      if (!(vandaag && 22 * 60 <= nuMin)) uit.push({ datum: iso, start: 13 * 60, eind: 22 * 60, soort: "woensdag", titel: "Woensdagnamiddag" });
+    }
+    // weekend: de hele dag, zonder uren
+    if (weekdag >= 5) {
+      uit.push({ datum: iso, start: 0, eind: 24 * 60, soort: "weekend", titel: weekdag === 5 ? "Zaterdag" : "Zondag" });
+    }
+    // avondblok op de andere schooldagen
+    if (avond && weekdag < 5 && weekdag !== 2) {
       const s = parseTijd(avond.start), e = parseTijd(avond.eind);
       if (!(vandaag && e <= nuMin)) uit.push({ datum: iso, start: s, eind: e, soort: "avond", titel: "Avond" });
     }

@@ -5,6 +5,7 @@ import * as B from "./bewerken.js";
 import * as T from "./todo.js";
 import * as D from "./gegevens.js";
 import * as E from "./evaluatie.js";
+import * as N from "./notities.js";
 
 // ---------- Instellingen (in deze browser) ----------
 const INST_SLEUTEL = "coffee_instellingen";
@@ -244,7 +245,7 @@ function lesTitel(rij) {
 }
 
 function lesKaart(rij, opties = {}) {
-  const kanBewerken = !opties.voorbeeld && rij.bron && rij.week && rij.week.bestand.mimeType === G.DOC_TYPE;
+  const kanBewerken = !opties.voorbeeld && !opties.geenBewerkKnop && rij.bron && rij.week && rij.week.bestand.mimeType === G.DOC_TYPE;
   const t = opties.voorbeeld ? rij : weergaveRij(rij);
   const idemChip = !opties.voorbeeld && rij.idem
     ? h("span", { class: "chip idem" }, rij.idemVan
@@ -301,14 +302,50 @@ function blokKaart(rij, datum, opties = {}) {
   );
 }
 
+const hoofdletter = (t) => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+// Een les of blok groot bekijken (alleen lezen), met een knop om te bewerken
+function openLesVenster(rij, datum) {
+  const sluit = () => { venster.sluit(); document.removeEventListener("keydown", opEscape); };
+  const opEscape = (e) => { if (e.key === "Escape" && document.querySelectorAll(".venster").length === 1) sluit(); };
+  document.addEventListener("keydown", opEscape);
+  const kanBewerken = rij.soort === "les" && rij.bron && rij.week && rij.week.bestand.mimeType === G.DOC_TYPE;
+  const kaart = rijKaart(rij, datum, { groot: true, geenBewerkKnop: true });
+  const nt = lesNotities(rij, datum);
+  const inhoud = kaart.querySelector(".lesinhoud");
+  if (nt && inhoud) inhoud.before(nt);
+  const dagNaam = datumTekst(datum, { weekday: "long", day: "numeric", month: "long" });
+  const venster = sluitbaarVenster([
+    h("header", { class: "venster-kop" },
+      h("div", {}, h("h2", {}, rij.soort === "les" ? hoofdletter(vakVoluit(rij.vak)) || "Les" : rij.soort === "vrij" ? "Vrij" : rij.titel),
+        h("div", { class: "klein" }, dagNaam.charAt(0).toUpperCase() + dagNaam.slice(1) + ", " + rij.uur)),
+      h("div", { class: "knoppen" },
+        h("button", { class: "knop secundair", onclick: sluit }, "Sluiten"),
+        kanBewerken ? h("button", { class: "knop", onclick: () => { sluit(); openBewerker(rij); } }, "✏️ Bewerken") : null)),
+    kaart
+  ], { lezen: true });
+  venster.element.addEventListener("click", (e) => { if (e.target === venster.element) sluit(); });
+  setTimeout(() => { const k = venster.element.querySelector(".venster-kop .knop:last-child"); if (k) k.focus(); }, 0);
+}
+
 function rijKaart(rij, datum, opties) { return rij.soort === "les" ? lesKaart(rij, opties) : blokKaart(rij, datum, opties); }
 
-function dagLijst(dag, datum, nuMin) {
+function dagLijst(dag, datum, nuMin, opties = {}) {
   const lijst = h("div", { class: "daglijst" });
   for (const rij of dag.rijen) {
     const bezig = nuMin != null && rij.start != null && nuMin >= rij.start && nuMin < rij.eind;
     const voorbij = nuMin != null && rij.eind != null && nuMin >= rij.eind;
     const titel = rij.soort === "les" ? lesTitel(rij) : rij.soort === "vrij" ? "Vrij" : rij.titel;
+    if (opties.compact) {
+      // weekoverzicht: een klik opent de les groot in een venster
+      lijst.appendChild(h("button", { type: "button", class: "rij compact " + rijKlasse(rij) + (bezig ? " bezig" : "") + (voorbij ? " voorbij" : ""),
+        onclick: () => openLesVenster(rij, datum) },
+        h("span", { class: "tijd" }, W.tijdTekst(rij.start)),
+        rijLabel(rij),
+        h("span", { class: "titel" + (rij.soort === "les" && !weergaveRij(rij).onderwerp ? " open" : "") }, titel),
+        rij.groen.length ? h("span", { class: "stip groen", title: rij.groen.join(", ") }, "●") : null,
+        rij.rood.length ? h("span", { class: "stip rood", title: rij.rood.join(", ") }, "●") : null));
+      continue;
+    }
     const det = h("details", { class: "rij " + rijKlasse(rij) + (bezig ? " bezig" : "") + (voorbij ? " voorbij" : "") },
       h("summary", {},
         h("span", { class: "tijd" }, W.tijdTekst(rij.start)),
@@ -322,6 +359,14 @@ function dagLijst(dag, datum, nuMin) {
     lijst.appendChild(det);
   }
   return lijst;
+}
+
+function grootMetNotitie(rij, datum) {
+  const kaart = rijKaart(rij, datum, { groot: true });
+  const nt = lesNotities(rij, datum);
+  const inhoud = kaart.querySelector(".lesinhoud");
+  if (nt && inhoud) inhoud.before(nt);
+  return kaart;
 }
 
 // ---------- Weergave: Nu ----------
@@ -339,6 +384,7 @@ async function toonNu(doel) {
       h("h3", {}, "Geen weekdocument voor deze week"),
       h("p", {}, "Ik vond geen document \"Week …\" voor de week van " + datumTekst(W.maandagVan(n), { day: "numeric", month: "long" }) + " in je agendamap."),
       volgendeSchooldagKnop(n)));
+    if (weekdagVan(n) >= 5) { doel.appendChild(todoVandaagKaart()); doel.appendChild(vrijeTijdKaart(n, "Weekend ☕")); }
     return;
   }
 
@@ -350,7 +396,8 @@ async function toonNu(doel) {
   const nuMin = W.minutenVan(n);
 
   if (!dag || !dag.rijen.length) {
-    doel.appendChild(h("div", { class: "kaart" }, h("h3", {}, "Geen lessen vandaag"), h("p", {}, "Geniet ervan! ☕")));
+    doel.appendChild(todoVandaagKaart());
+    doel.appendChild(vrijeTijdKaart(n, weekdagVan(n) >= 5 ? "Weekend ☕" : "Geen lessen vandaag ☕"));
     await toonVolgendeSchooldag(doel, n);
     return;
   }
@@ -368,6 +415,8 @@ async function toonNu(doel) {
   }
 
   doel.appendChild(todoVandaagKaart());
+  const eersteLes = dag.rijen.find(r => r.soort === "les" && r.start != null);
+  if (eersteLes && nuMin < eersteLes.start) { const ak = afdrukKaart(dag, n); if (ak) doel.appendChild(ak); }
   const hoofd = h("section", { class: "hoofd" });
   doel.appendChild(hoofd);
 
@@ -379,28 +428,37 @@ async function toonNu(doel) {
     const kop = kaart.querySelector("header");
     if (kop) kop.after(h("div", { class: "voortgang", role: "progressbar", "aria-valuenow": procent, "aria-valuemin": 0, "aria-valuemax": 100,
       "aria-label": "Verloop van dit lesuur" }, h("span", { style: "width:" + procent + "%" })));
+    const notities = lesNotities(huidig, n, { invoer: true });
+    if (notities) kaart.querySelector(".lesinhoud").before(notities);
     hoofd.appendChild(kaart);
     if (huidig.soort === "les" && !huidig.idem) {
       const vorigeVak = h("div", { class: "vorige" }, h("p", { class: "klein" }, "Vorige les zoeken…"));
       hoofd.appendChild(vorigeVak);
       toonVorigeLes(vorigeVak, week, { datum: W.middernacht(n), rij: huidig });
     }
+    // speeltijd of middagpauze: de volgende les al groot tonen
+    if (huidig.soort === "blok" && volgende) {
+      hoofd.appendChild(h("div", { class: "label-boven" }, "Hierna om " + W.tijdTekst(volgende.start)));
+      hoofd.appendChild(grootMetNotitie(volgende, n));
+      if (volgende.soort === "les" && !volgende.idem) {
+        const vorigeVak = h("div", { class: "vorige" });
+        hoofd.appendChild(vorigeVak);
+        toonVorigeLes(vorigeVak, week, { datum: W.middernacht(n), rij: volgende });
+      }
+    }
   } else if (eerste && nuMin < eerste.start) {
     hoofd.appendChild(h("div", { class: "label-boven" }, "Straks om " + W.tijdTekst(eerste.start)));
-    hoofd.appendChild(rijKaart(eerste, n, { groot: true }));
+    hoofd.appendChild(grootMetNotitie(eerste, n));
     if (eerste.soort === "les" && !eerste.idem) {
       const vorigeVak = h("div", { class: "vorige" });
       hoofd.appendChild(vorigeVak);
       toonVorigeLes(vorigeVak, week, { datum: W.middernacht(n), rij: eerste });
     }
   } else if (laatste && nuMin >= laatste.eind) {
-    const av = avondInstelling();
-    hoofd.appendChild(h("div", { class: "kaart" }, h("h3", {}, "De lesdag zit erop 🎉"),
-      weekdagVan(n) < 5 ? [h("p", { class: "klein" }, "Vanavond, " + av.start + "–" + av.eind + ":"),
-        todoBlok({ datum: W.isoDatum(n), start: tijdMin(av.start), eind: tijdMin(av.eind), soort: "avond", titel: "Avond" })] : null));
+    hoofd.appendChild(vrijeTijdKaart(n, "De lesdag zit erop 🎉"));
   }
 
-  if (volgende && volgende !== eerste) {
+  if (volgende && volgende !== eerste && !(huidig && huidig.soort === "blok")) {
     hoofd.appendChild(h("div", { class: "label-boven" }, "Daarna om " + W.tijdTekst(volgende.start)));
     const kort = h("details", { class: "rij " + rijKlasse(volgende) },
       h("summary", {}, h("span", { class: "tijd" }, W.tijdTekst(volgende.start)),
@@ -408,6 +466,8 @@ async function toonNu(doel) {
         h("span", { class: "titel" }, volgende.soort === "les" ? lesTitel(volgende) : volgende.soort === "vrij" ? "Vrij" : volgende.titel)),
       rijKaart(volgende, n));
     hoofd.appendChild(kort);
+    const nt = lesNotities(volgende, n);
+    if (nt) hoofd.appendChild(nt);
   }
 
   if (laatste && nuMin >= laatste.eind) await toonVolgendeSchooldag(doel, n);
@@ -480,7 +540,7 @@ async function toonWeek(doel) {
     const vandaag = W.middernacht(n).getTime() === datum.getTime();
     raster.appendChild(h("section", { class: "weekdag" + (vandaag ? " vandaag" : "") },
       h("h3", {}, dag.titel.charAt(0) + dag.titel.slice(1).toLowerCase()),
-      dagLijst(dag, datum, vandaag ? W.minutenVan(n) : null)));
+      dagLijst(dag, datum, vandaag ? W.minutenVan(n) : null, { compact: true })));
   }
   doel.appendChild(raster);
 }
@@ -631,6 +691,8 @@ function slotTekst(slot, kort = false) {
   const d = W.vanIso(slot.datum);
   const vandaag = W.isoDatum(nu()), morgen = W.isoDatum(W.plusDagen(nu(), 1));
   const dag = slot.datum === vandaag ? "Vandaag" : slot.datum === morgen ? "Morgen" : datumTekst(d, { weekday: kort ? "short" : "long", day: "numeric", month: "short" });
+  if (slot.soort === "weekend") return slot.datum === vandaag || slot.datum === morgen ? dag + " (" + slot.titel.toLowerCase() + ")" : dag;
+  if (slot.soort === "woensdag") return dag + " namiddag";
   const wat = slot.soort === "avond" ? "avond" : slot.titel;
   return dag + " " + W.tijdTekst(slot.start) + ", " + wat;
 }
@@ -774,27 +836,96 @@ function todoBlok(slot) {
   return h("div", { class: "todo-blok" }, lijst, snelToevoegen("Nieuwe to-do voor dit blok", { ...slot }));
 }
 
-// Kaart op het dashboard: wat staat er vandaag nog gepland?
+// Kaart op het dashboard: alle to-do's die vandaag gepland staan (permanenties, LO, namiddag, avond, weekend)
+const SOORT_LABEL = { perm: "P", vrij: "LO", avond: "🌙", woensdag: "🌤️", weekend: "🛋️" };
 function todoVandaagKaart() {
   return levendVak(() => {
     const iso = W.isoDatum(nu());
     const nuMin = W.minutenVan(nu());
-    // wat in het lopende blok staat, zie je al in de grote kaart
-    const vandaag = todos().filter(t => !t.klaar && t.gepland && t.gepland.datum === iso && !T.isVoorbij(t.gepland, nu()) &&
-                                        !(t.gepland.start <= nuMin && nuMin < t.gepland.eind))
-      .sort((a, b) => a.gepland.start - b.gepland.start);
+    const vandaag = todos().filter(t => t.gepland && t.gepland.datum === iso && (!t.klaar || (t.klaarOp && W.isoDatum(new Date(t.klaarOp)) === iso)))
+      .sort((a, b) => (a.klaar - b.klaar) || a.gepland.start - b.gepland.start || a.aangemaakt - b.aangemaakt);
     const open = T.aantalOpen(todos(), nu());
     if (!vandaag.length && !open) return null;
+    const nogOpen = vandaag.filter(t => !t.klaar).length;
     return h("div", { class: "kaart todo-vandaag" },
-      h("h4", {}, "✅ To-do's vandaag"),
+      h("h4", {}, "✅ To-do's vandaag", vandaag.length ? h("span", { class: "klein" }, " " + (vandaag.length - nogOpen) + "/" + vandaag.length + " klaar") : null),
       vandaag.length ? h("ul", { class: "todolijst" }, vandaag.map(t => {
         const li = todoItem(t, { inBlok: true });
-        li.querySelector(".todo-midden").prepend(h("span", { class: "tijd" }, W.tijdTekst(t.gepland.start) + " "));
+        const g = t.gepland;
+        const bezig = g.start <= nuMin && nuMin < g.eind && g.soort !== "weekend";
+        const wanneer = g.soort === "weekend" ? SOORT_LABEL.weekend : W.tijdTekst(g.start) + " " + (SOORT_LABEL[g.soort] || "");
+        li.querySelector(".todo-midden").prepend(h("span", { class: "tijd" + (bezig ? " nu" : ""), title: g.titel }, wanneer.trim() + " "));
+        if (!t.klaar && T.isVoorbij(g, nu())) li.classList.add("verlopen");
         return li;
-      })) : h("p", { class: "klein" }, "Niets meer gepland voor vandaag."),
+      })) : h("p", { class: "klein" }, "Niets gepland voor vandaag."),
       open ? h("p", { class: "klein" }, h("a", { href: "#", onclick: (e) => { e.preventDefault(); staat.weergave = "todo"; toon(); } },
         open === 1 ? "1 to-do wacht nog op een moment" : open + " to-do's wachten nog op een moment")) : null);
   });
+}
+
+// Het vrije blok buiten de schooluren van vandaag: avond, woensdagnamiddag of weekend
+function vrijeTijdSlot(n) {
+  const wd = weekdagVan(n), iso = W.isoDatum(n);
+  if (wd >= 5) return { datum: iso, start: 0, eind: 24 * 60, soort: "weekend", titel: wd === 5 ? "Zaterdag" : "Zondag" };
+  if (wd === 2) return { datum: iso, start: 13 * 60, eind: 22 * 60, soort: "woensdag", titel: "Woensdagnamiddag" };
+  const av = avondInstelling();
+  return { datum: iso, start: tijdMin(av.start), eind: tijdMin(av.eind), soort: "avond", titel: "Avond" };
+}
+function vrijeTijdKaart(n, titel) {
+  const slot = vrijeTijdSlot(n);
+  const uitleg = slot.soort === "weekend" ? "Plan hier wat je dit weekend wilt doen:" :
+    slot.soort === "woensdag" ? "Woensdagnamiddag (13–22 u.):" : "Vanavond, " + W.tijdTekst(slot.start) + "–" + W.tijdTekst(slot.eind) + ":";
+  return h("div", { class: "kaart" }, h("h3", {}, titel), h("p", { class: "klein" }, uitleg), todoBlok(slot));
+}
+
+// ---------- Notities voor de volgende les ----------
+function notitieBlok(n) {
+  return h("div", { class: "notitie" }, h("span", { class: "notitie-kop" }, "📝 Vorige keer (" + datumTekst(W.vanIso(n.datum), { weekday: "short", day: "numeric", month: "short" }) + ")"),
+    h("span", {}, ...metLinks(n.tekst)));
+}
+// Wat je de vorige keer noteerde bij dit vak, en (optioneel) een veld voor een nieuwe notitie
+function lesNotities(rij, datum, { invoer = false } = {}) {
+  if (rij.soort !== "les" || !rij.vak || !datum) return null;
+  const iso = W.isoDatum(datum);
+  return levendVak(() => {
+    const lijst = D.data().notities || [];
+    const vorige = N.vorigeNotitie(lijst, rij.vak, iso, rij.start);
+    if (!invoer) return vorige ? notitieBlok(vorige) : null;
+    const eigen = N.eigenNotitie(lijst, rij.vak, iso, rij.start);
+    const veld = h("input", { type: "text", class: "notitie-veld", value: eigen ? eigen.tekst : "",
+      placeholder: "Notitie voor de volgende les, bv. afgewerkt tot oef. 7", "aria-label": "Notitie voor de volgende les " + vakVoluit(rij.vak) });
+    const bewaar = () => {
+      const nu_ = N.eigenNotitie(D.data().notities || [], rij.vak, iso, rij.start);
+      if ((nu_ ? nu_.tekst : "") !== veld.value.trim()) D.wijzig(g => N.zetNotitie(g, rij.vak, iso, rij.start, veld.value));
+    };
+    veld.addEventListener("input", (e) => maakPijlen(veld, e));
+    veld.addEventListener("change", bewaar);
+    veld.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); veld.blur(); } });
+    return [vorige ? notitieBlok(vorige) : null, h("label", { class: "notitie-invoer" }, h("span", {}, "📝"), veld)];
+  });
+}
+
+// ---------- Afdruklijst voor de zachte landing ----------
+function afdrukKaart(dag, datum) {
+  const iso = W.isoDatum(datum);
+  const lessen = dag.rijen.filter(r => r.soort === "les").map(r => ({ rij: r, items: (weergaveRij(r).materiaal || []).filter(m => m && m !== "•") }))
+    .filter(x => x.items.length);
+  if (!lessen.length) return null;
+  const sleutel = "coffee_afgedrukt_" + iso;
+  let gedaan = {};
+  try { gedaan = JSON.parse(localStorage.getItem(sleutel) || "{}"); } catch (e) { gedaan = {}; }
+  const zet = (k, v) => { gedaan[k] = v; try { localStorage.setItem(sleutel, JSON.stringify(gedaan)); } catch (e) { /* niet erg */ } };
+  return h("div", { class: "kaart afdruklijst" },
+    h("h4", {}, "🖨️ Afdrukken en klaarleggen voor vandaag"),
+    lessen.map(({ rij, items }) => h("div", { class: "afdruk-les" },
+      h("div", { class: "afdruk-kop" }, h("span", { class: "tijd" }, W.tijdTekst(rij.start)), vakLabel(rij.vak), h("span", {}, lesTitel(rij))),
+      h("ul", {}, items.map((m, i) => {
+        const k = rij.start + "|" + i;
+        const vink = h("input", { type: "checkbox", checked: gedaan[k] || null, "aria-label": "Klaargelegd" });
+        const li = h("li", { class: gedaan[k] ? "gedaan" : "" }, vink, h("span", {}, ...metLinks(m)));
+        vink.addEventListener("change", () => { zet(k, vink.checked); li.classList.toggle("gedaan", vink.checked); });
+        return li;
+      })))));
 }
 
 function dagKop(iso) {
@@ -835,8 +966,8 @@ async function openInplanner(todo) {
       const al = T.inBlok(todos(), s.datum, s.start, s.soort).filter(t => !t.klaar && t.id !== todo.id).length;
       const gekozen = todo.gepland && T.slotSleutel(todo.gepland) === T.slotSleutel(s);
       return h("button", { class: "slot " + s.soort + (gekozen ? " gekozen" : ""), onclick: () => { wijzigTodo(todo.id, x => { x.gepland = { ...s }; }); venster.sluit(); } },
-        h("span", { class: "tijd" }, W.tijdTekst(s.start) + "–" + W.tijdTekst(s.eind)),
-        h("span", {}, s.soort === "avond" ? "🌙 Avond" : s.soort === "vrij" ? "LO (vrij)" : s.titel),
+        s.soort === "weekend" ? null : h("span", { class: "tijd" }, W.tijdTekst(s.start) + "–" + W.tijdTekst(s.eind)),
+        h("span", {}, s.soort === "avond" ? "🌙 Avond" : s.soort === "vrij" ? "LO (vrij)" : s.soort === "weekend" ? "🛋️ " + s.titel : s.soort === "woensdag" ? "🌤️ Namiddag" : s.titel),
         al ? h("span", { class: "slot-aantal", title: "Al gepland in dit blok" }, String(al)) : null);
     })))));
 }
@@ -1229,27 +1360,89 @@ function vervangBereik(el, s, e, tekst, cursor) {
   el.setSelectionRange(c, c);
   el.dispatchEvent(new Event("input"));
 }
-function wisselOpsomming(el) {
-  const [s, e] = lijnBereik(el);
-  const lijnen = el.value.slice(s, e).split("\n");
-  const allemaal = lijnen.every(l => /^\s*[-–•]\s/.test(l) || !l.trim());
-  const nieuw = lijnen.map(l => !l.trim() ? l : allemaal ? l.replace(/^\s*[-–•]\s+/, "") : (/^\s*[-–•]\s/.test(l) ? l : "- " + l));
-  vervangBereik(el, s, e, nieuw.join("\n"));
-}
 function wisselKleur(el, teken) {
   const [s, e] = lijnBereik(el);
   const lijnen = el.value.slice(s, e).split("\n").map(l => {
     if (!l.trim()) return l;
-    const m = l.match(/^(\s*(?:[-–•]\s+)?)(❗ |🟢 )?(.*)$/u);
+    const m = l.match(/^(\s*(?:[-–•◦▪]\s+)?)(❗ |🟢 )?(.*)$/u);
     return m[2] === teken + " " ? m[1] + m[3] : m[1] + teken + " " + m[3];
   });
   vervangBereik(el, s, e, lijnen.join("\n"));
 }
-function voegLijnToe(el, tekst) {
-  const [, e] = lijnBereik(el);
-  const huidig = el.value.slice(lijnBereik(el)[0], e);
-  const invoeg = (huidig.trim() ? "\n" : "") + tekst;
-  vervangBereik(el, e, e, invoeg + (e === el.value.length ? "\n" : ""), e + invoeg.length + 1);
+
+// Tekst vervangen zodat Ctrl+Z blijft werken (execCommand), met terugval
+function typVervang(el, s, e, tekst) {
+  el.focus();
+  el.setSelectionRange(s, e);
+  let gelukt = false;
+  try { gelukt = document.execCommand("insertText", false, tekst); } catch (x) { gelukt = false; }
+  if (!gelukt || el.value.slice(s, s + tekst.length) !== tekst) vervangBereik(el, s, e, tekst);
+  el.setSelectionRange(s + tekst.length, s + tekst.length);
+}
+
+// "-->" en "->" worden een pijl (in alle tekstvelden van de bewerker)
+function maakPijlen(el, e) {
+  if (e.inputType !== "insertText" || e.data !== ">") return false;
+  const pos = el.selectionStart, voor = el.value.slice(0, pos);
+  const m = voor.match(/-{1,2}>$/);
+  if (!m) return false;
+  typVervang(el, pos - m[0].length, pos, "→");
+  return true;
+}
+
+// ----- Slimme opsomming in een tekstvak -----
+const OPSOMMING = /^([ \t]*)([-–•◦▪])([ \t]+|$)/;
+function niveauVan(ruimte) { const n = ruimte.replace(/\t/g, B.INSPRING).length; return n >= 6 ? 2 : n >= 2 ? 1 : 0; }
+function lijnInfo(el) {
+  const v = el.value, pos = el.selectionStart;
+  const s = v.lastIndexOf("\n", pos - 1) + 1;
+  let e = v.indexOf("\n", pos); if (e < 0) e = v.length;
+  const lijn = v.slice(s, e);
+  const m = lijn.match(OPSOMMING);
+  if (!m) return { s, e, lijn, pos, opsomming: false };
+  return { s, e, lijn, pos, opsomming: true, niveau: niveauVan(m[1]), voorLen: m[0].length, inhoud: lijn.slice(m[0].length) };
+}
+function zetNiveau(el, info, niveau) {
+  const nieuwVoor = niveau < 0 ? "" : B.opsommingTeken(niveau);
+  const cursorNaInhoud = Math.max(0, info.pos - info.s - info.voorLen);
+  typVervang(el, info.s, info.s + info.voorLen, nieuwVoor);
+  const c = info.s + nieuwVoor.length + cursorNaInhoud;
+  el.setSelectionRange(c, c);
+}
+function slimmeLijst(el) {
+  el.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+    const info = lijnInfo(el);
+    if (e.key === "Tab" && info.opsomming && el.selectionStart === el.selectionEnd) {
+      e.preventDefault();
+      if (e.shiftKey) zetNiveau(el, info, info.niveau - 1);
+      else if (info.niveau < 2) zetNiveau(el, info, info.niveau + 1);
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey && info.opsomming && el.selectionStart === el.selectionEnd) {
+      e.preventDefault();
+      if (!info.inhoud.trim()) {
+        // lege opsommingsregel: één niveau terug, of de lijst stoppen
+        if (info.niveau > 0) zetNiveau(el, info, info.niveau - 1);
+        else typVervang(el, info.s, info.e, "");
+        return;
+      }
+      typVervang(el, info.pos, info.pos, "\n" + B.opsommingTeken(info.niveau));
+      return;
+    }
+    if (e.key === "Backspace" && info.opsomming && el.selectionStart === el.selectionEnd && info.pos === info.s + info.voorLen) {
+      e.preventDefault();
+      zetNiveau(el, info, info.niveau - 1);
+    }
+  });
+  el.addEventListener("input", (e) => {
+    if (e.inputType !== "insertText" || e.data !== " ") return;
+    // "- " of "* " aan het begin van een lijn wordt een bolletje
+    const pos = el.selectionStart, v = el.value;
+    const s = v.lastIndexOf("\n", pos - 2) + 1;
+    const m = v.slice(s, pos).match(/^([ \t]*)[-*] $/);
+    if (m) typVervang(el, s, pos, B.opsommingTeken(niveauVan(m[1])));
+  });
 }
 function voegInBijCursor(el, tekst, vervangVorig = 0) {
   const s = el.selectionStart - vervangVorig;
@@ -1257,7 +1450,7 @@ function voegInBijCursor(el, tekst, vervangVorig = 0) {
 }
 
 function sluitbaarVenster(inhoud, opties = {}) {
-  const achtergrond = h("div", { class: "venster" + (opties.klein ? " klein" : "") }, h("div", { class: "venster-inhoud" }, inhoud));
+  const achtergrond = h("div", { class: "venster" + (opties.klein ? " klein" : "") + (opties.lezen ? " lezen" : "") }, h("div", { class: "venster-inhoud" }, inhoud));
   document.body.appendChild(achtergrond);
   document.body.classList.add("geen-scroll");
   const sluit = () => { achtergrond.remove(); if (!document.querySelector(".venster")) document.body.classList.remove("geen-scroll"); };
@@ -1309,9 +1502,9 @@ function openBewerker(rij) {
 
   const vakVeld = h("input", { type: "text", list: "vakkenlijst", value: v.vak });
   let vakTimer = null;
-  vakVeld.addEventListener("input", () => { v.vak = vakVeld.value; ververs(); clearTimeout(vakTimer); vakTimer = setTimeout(() => toonVorige(0), 400); });
+  vakVeld.addEventListener("input", () => { v.vak = vakVeld.value; ververs(); clearTimeout(vakTimer); vakTimer = setTimeout(() => { toonVorige(0); toonVorigeNotitie(); }, 400); });
   const onderwerpVeld = h("input", { type: "text", value: v.onderwerp, placeholder: "bv. VLL kern 7 dag 15: herhaling" });
-  onderwerpVeld.addEventListener("input", () => { v.onderwerp = onderwerpVeld.value; ververs(); });
+  onderwerpVeld.addEventListener("input", (e) => { if (maakPijlen(onderwerpVeld, e)) return; v.onderwerp = onderwerpVeld.value; ververs(); });
 
   // Een geplakte link wordt een knop; bij een Drive-link zoekt Coffee! de bestandsnaam op
   const plakLink = (el) => el.addEventListener("paste", async (e) => {
@@ -1322,11 +1515,13 @@ function openBewerker(rij) {
     voegInBijCursor(el, "[" + (naam || linkLabel(tekst)).replace(/[\[\]]/g, "") + "](" + tekst + ")");
   });
   plakLink(onderwerpVeld);
-  const tekstvak = (naam, rijen, plaatshouder) => {
+  const tekstvak = (naam, rijen, plaatshouder, lijst = true) => {
     const el = h("textarea", { rows: rijen, placeholder: plaatshouder, spellcheck: "true" });
     plakLink(el);
+    if (lijst) slimmeLijst(el);
     el.value = v[naam];
     el.addEventListener("input", (e) => {
+      if (maakPijlen(el, e)) return;
       v[naam] = el.value; ververs();
       // @ typen = Drive-bestand koppelen
       const pos = el.selectionStart;
@@ -1337,15 +1532,35 @@ function openBewerker(rij) {
     return el;
   };
   const doelenVeld = tekstvak("doelen", 3, "Ik kan …  (één doel per lijn)");
-  const verloopVeld = tekstvak("verloop", 12, "Inl\n- …\nKern\n- …\nSlot\n- …");
-  const materiaalVeld = tekstvak("materiaal", 5, "- werkbundel\n- @ om een Drive-bestand te koppelen");
+  const verloopVeld = tekstvak("verloop", 12, "Inl\n• …\nKern\n• …\nSlot\n• …");
+  const materiaalVeld = tekstvak("materiaal", 4, "• werkbundel\n• @ om een Drive-bestand te koppelen");
+  const therapieVeld = tekstvak("therapie", 2, "bv. 9.55 u. therapie … / … afwezig", false);
+
+  // Notitie voor de volgende les: enkel in je gegevensbestand op Drive
+  const iso = rij.datum ? W.isoDatum(rij.datum) : null;
+  const notities = () => D.data().notities || [];
+  const eigen = iso ? N.eigenNotitie(notities(), v.vak || rij.vak, iso, rij.start) : null;
+  const notitieVeld = h("input", { type: "text", value: eigen ? eigen.tekst : "", placeholder: "bv. afgewerkt tot oef. 7" });
+  notitieVeld.addEventListener("input", (e) => { maakPijlen(notitieVeld, e); });
+  const bewaarNotitie = () => {
+    if (!iso) return;
+    const vak = v.vak.trim() || rij.vak;
+    const huidig = N.eigenNotitie(notities(), vak, iso, rij.start);
+    if ((huidig ? huidig.tekst : "") === notitieVeld.value.trim()) return;
+    D.wijzig(g => N.zetNotitie(g, vak, iso, rij.start, notitieVeld.value));
+  };
+  notitieVeld.addEventListener("change", bewaarNotitie);
+  const vorigeNotitieVak = h("div");
+  const toonVorigeNotitie = () => {
+    const n = iso ? N.vorigeNotitie(notities(), v.vak, iso, rij.start) : null;
+    vorigeNotitieVak.replaceChildren(n ? notitieBlok(n) : "");
+  };
+  toonVorigeNotitie();
 
   const knop = (tekst, titel, actie) => h("button", { type: "button", class: "knop klein secundair", title: titel, onclick: actie }, tekst);
   const werkbalk = (el, extra) => h("div", { class: "werkbalk" },
     extra || [],
-    knop("– opsomming", "Opsomming aan/uit voor de huidige lijn(en)", () => wisselOpsomming(el)),
     knop("❗ rood", "Rode herinnering aan/uit", () => wisselKleur(el, "❗")),
-    knop("🟢 therapie", "Groene regel (therapie) aan/uit", () => wisselKleur(el, "🟢")),
     knop("📎 Drive", "Drive-bestand koppelen (of typ @)", () => openDriveZoeker(f => voegInBijCursor(el, mdLink(f)))));
 
   const opslaanKnop = h("button", { class: "knop" }, "Opslaan in Google Docs");
@@ -1355,15 +1570,16 @@ function openBewerker(rij) {
     if (B.gewijzigdeCellen(origineel, v).length && !wegGooienGevraagd) {
       wegGooienGevraagd = true; annuleerKnop.textContent = "Wijzigingen weggooien?"; return;
     }
-    venster.sluit(); document.removeEventListener("keydown", opEscape);
+    bewaarNotitie(); venster.sluit(); document.removeEventListener("keydown", opEscape);
   };
   const opEscape = (e) => { if (e.key === "Escape" && !document.querySelector(".venster.klein")) probeerSluiten(); };
   document.addEventListener("keydown", opEscape);
   annuleerKnop.addEventListener("click", probeerSluiten);
 
   opslaanKnop.addEventListener("click", async () => {
+    bewaarNotitie();
     const cellen = B.gewijzigdeCellen(origineel, v);
-    if (!cellen.length) { venster.sluit(); document.removeEventListener("keydown", opEscape); return; }
+    if (!cellen.length) { venster.sluit(); document.removeEventListener("keydown", opEscape); toon(); return; }
     opslaanKnop.disabled = true; opslaanKnop.textContent = "Bezig met opslaan…";
     try {
       await G.schrijfLes(rij.week.bestand, rij.plaats, rij.bron.tekst, v, cellen);
@@ -1391,8 +1607,7 @@ function openBewerker(rij) {
     idemBalk = h("div", { class: "melding info" }, "Deze les staat op IDEM (zoals " + wanneer + "). ",
       h("button", { type: "button", class: "knop klein", onclick: () => {
         const bv = B.rijNaarVelden(rij.idemVan.rij);
-        const zonderTherapie = (t) => t.split("\n").filter(l => !/^\s*(?:[-–•]\s+)?🟢/u.test(l)).join("\n");
-        v.onderwerp = bv.onderwerp; v.doelen = bv.doelen; v.verloop = zonderTherapie(bv.verloop);
+        v.onderwerp = bv.onderwerp; v.doelen = bv.doelen; v.verloop = bv.verloop;
         v.hadDoelen = true; v.hadVerloop = true;
         if (rij.materiaalIdem) v.materiaal = bv.materiaal;
         onderwerpVeld.value = v.onderwerp; doelenVeld.value = v.doelen; verloopVeld.value = v.verloop; materiaalVeld.value = v.materiaal;
@@ -1414,7 +1629,6 @@ function openBewerker(rij) {
   toonPaneel("vorige");
 
   const zetVeld = (naam, waarde, veld) => { v[naam] = waarde; veld.value = waarde; ververs(); };
-  const zonderTherapie = (t) => t.split("\n").filter(l => !/^\s*(?:[-–•]\s+)?🟢/u.test(l)).join("\n");
   let eerdereLessen = null;
   async function toonVorige(index) {
     vorigePaneel.replaceChildren(h("p", { class: "laden" }, "Vorige lessen zoeken…"));
@@ -1444,7 +1658,7 @@ function openBewerker(rij) {
       h("div", { class: "overnemen" },
         volgende ? h("button", { type: "button", class: "knop klein", title: "Als lesonderwerp invullen", onclick: () => zetVeld("onderwerp", volgende, onderwerpVeld) }, "↪ " + volgende) : null,
         bv.doelen ? h("button", { type: "button", class: "knop klein secundair", onclick: () => { v.hadDoelen = true; zetVeld("doelen", bv.doelen, doelenVeld); } }, "Doelen overnemen") : null,
-        bv.verloop ? h("button", { type: "button", class: "knop klein secundair", onclick: () => { v.hadVerloop = true; zetVeld("verloop", zonderTherapie(bv.verloop), verloopVeld); } }, "Verloop overnemen") : null,
+        bv.verloop ? h("button", { type: "button", class: "knop klein secundair", onclick: () => { v.hadVerloop = true; zetVeld("verloop", bv.verloop, verloopVeld); } }, "Verloop overnemen") : null,
         bv.materiaal ? h("button", { type: "button", class: "knop klein secundair", onclick: () => zetVeld("materiaal", bv.materiaal, materiaalVeld) }, "Materiaal overnemen") : null),
       lesKaart(toon, { voorbeeld: true }));
   }
@@ -1456,12 +1670,13 @@ function openBewerker(rij) {
       h("div", { class: "veld smal" }, h("label", {}, "Vak"), vakVeld,
         h("datalist", { id: "vakkenlijst" }, VAKKEN.map(x => h("option", { value: x })))),
       h("div", { class: "veld" }, h("label", {}, "Lesonderwerp"), onderwerpVeld)),
+    vorigeNotitieVak,
     h("div", { class: "veld" }, h("label", {}, "Doelen"), doelenVeld),
-    h("div", { class: "veld" }, h("label", {}, "Verloop"),
-      werkbalk(verloopVeld, ["Inl", "Kern", "Slot"].map(f => knop(f, "Kopje " + f + " toevoegen", () => voegLijnToe(verloopVeld, f + "\n- ")))),
-      verloopVeld),
+    h("div", { class: "veld" }, h("label", {}, "Verloop"), werkbalk(verloopVeld), verloopVeld),
     h("div", { class: "veld" }, h("label", {}, "Materiaal"), werkbalk(materiaalVeld), materiaalVeld),
-    h("p", { class: "klein" }, "Tip: typ @ om een werkblad of ander bestand uit je Drive te koppelen.")
+    h("div", { class: "veld" }, h("label", {}, "Extra therapie of afwezigheid ", h("span", { class: "klein" }, "(groen, onderaan in je agenda)")), therapieVeld),
+    h("div", { class: "veld" }, h("label", {}, "📝 Notitie voor de volgende les ", h("span", { class: "klein" }, "(enkel in Coffee!)")), notitieVeld),
+    h("p", { class: "klein" }, "Tip: typ - en een spatie voor een opsomming, Tab om in te springen, @ om een Drive-bestand te koppelen, --> voor →.")
   );
 
   const venster = sluitbaarVenster([
@@ -1529,7 +1744,7 @@ let bezigMetTonen = 0;
 async function toon() {
   const mijnBeurt = ++bezigMetTonen;
   const app = $("app");
-  const inhoud = h("main", {});
+  const inhoud = h("main", { class: "weergave-" + staat.weergave });
   app.replaceChildren(kopbalk(), inhoud);
   try {
     if (staat.weergave === "instellingen") return toonInstellingen(inhoud);

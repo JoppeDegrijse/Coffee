@@ -214,13 +214,15 @@ h3.open { color: var(--tekst-zacht); font-style: italic; font-weight: 500 !impor
 .regels .kop strong { font-family: var(--titel); }
 .regels .fase { margin-top: 8px; color: var(--accent); font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
 .regels .punt { position: relative; padding-left: calc(18px + var(--niveau, 0) * 18px); }
-.regels .punt::before { content: "–"; position: absolute; left: calc(4px + var(--niveau, 0) * 18px); color: var(--tekst-zacht); }
+.regels .punt::before { content: "•"; position: absolute; left: calc(4px + var(--niveau, 0) * 18px); color: var(--tekst-zacht); }
+.regels .punt[style*="--niveau:1"]::before { content: "◦"; }
+.regels .punt[style*="--niveau:2"]::before { content: "▪"; font-size: .8em; }
 .regels .witruimte { height: 6px; }
 .materiaal { background: var(--oppervlak-2); border-radius: var(--r); padding: 12px 14px; align-self: start; }
 .materiaal h4 { margin: 0 0 6px; font-size: .95rem; }
 .materiaal ul { list-style: none; margin: 0; padding: 0; }
 .materiaal li { padding: 2px 0; word-break: break-word; }
-.materiaal li::before { content: "– "; color: var(--tekst-zacht); }
+.materiaal li::before { content: "• "; color: var(--tekst-zacht); }
 
 .linkchip {
   display: inline-flex; align-items: center; gap: 5px; vertical-align: baseline; max-width: 100%;
@@ -247,7 +249,7 @@ h3.sectie { margin: 28px 0 10px; font-size: 1.25rem; font-weight: 800; }
 
 /* ---------- Daglijst ---------- */
 .daglijst { display: flex; flex-direction: column; gap: 4px; }
-details.rij { background: var(--oppervlak); border: 1px solid var(--lijn); border-radius: var(--r); }
+.rij { background: var(--oppervlak); border: 1px solid var(--lijn); border-radius: var(--r); }
 details.rij > summary {
   list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-radius: var(--r);
 }
@@ -256,14 +258,14 @@ details.rij > summary::-webkit-details-marker { display: none; }
 details.rij > summary .titel { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 details.rij[open] > summary .titel { white-space: normal; }
 details.rij > .kaart { margin: 0 8px 8px; }
-details.rij.blok { background: var(--pauze); border-color: transparent; }
-details.rij.perm { background: var(--perm); border-color: var(--perm-lijn); }
-details.rij.vrij { background: var(--vrij); border-color: transparent; color: var(--vrij-tekst); }
-details.rij.bewaking { background: var(--rood-zacht); border-color: var(--rood-lijn); }
-details.rij.bewaking > summary .titel { color: var(--rood); font-weight: 700; }
-details.rij.bezig { border-color: var(--karamel); box-shadow: inset 4px 0 0 var(--karamel); }
-details.rij.bezig > summary .titel { font-weight: 700; }
-details.rij.voorbij { opacity: .5; }
+.rij.blok { background: var(--pauze); border-color: transparent; }
+.rij.perm { background: var(--perm); border-color: var(--perm-lijn); }
+.rij.vrij { background: var(--vrij); border-color: transparent; color: var(--vrij-tekst); }
+.rij.bewaking { background: var(--rood-zacht); border-color: var(--rood-lijn); }
+.rij.bewaking > summary .titel { color: var(--rood); font-weight: 700; }
+.rij.bezig { border-color: var(--karamel); box-shadow: inset 4px 0 0 var(--karamel); }
+.rij.bezig > summary .titel { font-weight: 700; }
+.rij.voorbij { opacity: .5; }
 .stip { font-size: .8rem; }
 .stip.groen { color: var(--groen); }
 .stip.rood { color: var(--rood); }
@@ -543,3 +545,51 @@ input.score:placeholder-shown { border-style: dashed; border-color: var(--tekst-
 .klastabel { table-layout: fixed; }
 .klastabel thead th.n { width: 130px; }
 .klastabel thead th:last-child { width: 150px; }
+
+/* ---------- Weekoverzicht: compacte rijen + hele week naast elkaar op pc ---------- */
+button.rij.compact {
+  display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; font: inherit; color: inherit;
+  padding: 8px 10px; cursor: pointer; min-height: 44px;
+}
+button.rij.compact:hover { filter: brightness(.97); }
+button.rij.compact .titel { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
+button.rij.compact .titel.open { color: var(--tekst-zacht); font-style: italic; }
+button.rij.compact .tijd { padding-top: 1px; }
+button.rij.compact.bewaking .titel { color: var(--rood); font-weight: 700; }
+button.rij.compact.bezig .titel { font-weight: 700; }
+@media (min-width: 1100px) {
+  main.weergave-week { max-width: 1680px; }
+  main.weergave-week .weekraster { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+  main.weergave-week button.rij.compact { flex-wrap: wrap; row-gap: 2px; }
+  main.weergave-week button.rij.compact .titel { flex-basis: 100%; order: 2; -webkit-line-clamp: 3; font-size: .95rem; }
+  main.weergave-week button.rij.compact .stip { align-self: center; }
+}
+.venster.lezen .venster-inhoud { max-width: 900px; }
+.venster.lezen .kaart { margin: 0; }
+
+/* ---------- Notities voor de volgende les ---------- */
+.notitie {
+  display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin: 8px 0;
+  background: var(--perm); color: var(--tekst); border-left: 4px solid var(--perm-lijn); border-radius: var(--r-klein); padding: 7px 12px;
+}
+.notitie-kop { font-weight: 700; color: var(--perm-tekst); font-size: .9rem; white-space: nowrap; }
+.notitie-invoer { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
+.notitie-invoer input { flex: 1; margin: 0; }
+.hoofd > .levend > .notitie { margin-top: -2px; }
+
+/* ---------- Afdruklijst (zachte landing) ---------- */
+.afdruklijst h4 { margin: 0 0 6px; font-size: 1rem; }
+.afdruk-les { padding: 6px 0; border-top: 1px solid var(--lijn); }
+.afdruk-les:first-of-type { border-top: 0; }
+.afdruk-kop { display: flex; align-items: center; gap: 8px; font-weight: 700; margin-bottom: 2px; }
+.afdruk-les ul { list-style: none; margin: 0; padding: 0 0 0 4px; }
+.afdruk-les li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.afdruk-les li input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--accent); }
+.afdruk-les li.gedaan > span { text-decoration: line-through; color: var(--tekst-zacht); }
+
+/* ---------- To-do's vandaag ---------- */
+.todo-vandaag .tijd.nu { color: var(--karamel); font-weight: 700; }
+.todo.verlopen .tijd { color: var(--rood); }
+.slot.woensdag { background: var(--groen-zacht); }
+.slot.weekend { background: var(--info); }
+.slotgroep.woensdag h4, .slotgroep.weekend h4 { color: var(--accent); }

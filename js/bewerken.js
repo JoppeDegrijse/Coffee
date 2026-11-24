@@ -1,12 +1,14 @@
 // Coffee! – een lesuur omzetten naar bewerkbare velden en terug naar Google Docs-opdrachten.
 //
 // Invulformaat in de tekstvakken (één regel per lijn):
-//   - iets          opsomming (streepje)
-//     - iets        opsomming, niveau 2 (twee spaties ervoor)
+//   • iets          opsomming
+//       ◦ iets      opsomming, niveau 2 (vier spaties ervoor)
+//           ▪ iets  opsomming, niveau 3
 //   ❗ iets         rode herinnering
-//   🟢 iets         groene regel (therapie)
 //   Inl / Kern / Slot   onderlijnde kopjes
 //   [tekst](url)    link
+// Therapieën/afwezigheden (groene regels) staan in een apart veld en komen onderaan de inhoudscel.
+// In Google Docs worden opsommingen echte opsommingstekens (met niveaus).
 
 const ROOD = "❗";
 const GROEN = "🟢";
@@ -15,9 +17,14 @@ const LINK_KLEUR = { red: 0.067, green: 0.333, blue: 0.8 };
 const LABEL = "Lesonderwerp:";
 
 // ---------- Van document naar velden ----------
-function regelNaarMarkup(r) {
-  const opsomming = r.niveau >= 0 ? "  ".repeat(Math.min(r.niveau, 3)) + "- " : "";
-  const kleur = r.kleur === "rood" ? ROOD + " " : r.kleur === "groen" ? GROEN + " " : "";
+export const SYMBOLEN = ["•", "◦", "▪"];
+export const INSPRING = "    ";
+export const LEEG_VERLOOP = "Inl\n• \nKern\n• \nSlot\n• ";
+export function opsommingTeken(niveau) { const n = Math.max(0, Math.min(niveau, 2)); return INSPRING.repeat(n) + SYMBOLEN[n] + " "; }
+
+function regelNaarMarkup(r, metGroen = true) {
+  const opsomming = r.niveau >= 0 ? opsommingTeken(r.niveau) : "";
+  const kleur = r.kleur === "rood" ? ROOD + " " : (r.kleur === "groen" && metGroen) ? GROEN + " " : "";
   return opsomming + kleur + (r.md != null ? r.md : r.tekst).trim();
 }
 
@@ -31,9 +38,11 @@ function trimLeeg(lijnen) {
 export function rijNaarVelden(rij) {
   let onderwerp = "";
   const delen = { voor: [], doelen: [], verloop: [] };
+  const therapie = [];
   let huidig = "voor", hadDoelen = false, hadVerloop = false, hadLabel = false;
   for (const r of rij.regels || []) {
     const t = (r.tekst || "").trim();
+    if (t && r.kleur === "groen") { therapie.push((r.md != null ? r.md : r.tekst).trim()); continue; }
     const lo = t.match(/^Lesonderwerp:\s*(.*)$/i);
     if (lo && !hadLabel) { onderwerp = (r.md || r.tekst).replace(/^\s*Lesonderwerp:\s*/i, "").trim(); hadLabel = true; continue; }
     const kop = t.match(/^(Doelen|Verloop):\s*(.*)$/i);
@@ -51,7 +60,8 @@ export function rijNaarVelden(rij) {
     vak: rij.vak || "",
     onderwerp,
     doelen: trimLeeg(delen.doelen).join("\n"),
-    verloop: verloop.join("\n"),
+    verloop: verloop.length ? verloop.join("\n") : LEEG_VERLOOP,
+    therapie: therapie.join("\n"),
     materiaal: trimLeeg((rij.materiaalRegels || []).map(r => r.tekst.trim() ? regelNaarMarkup(r) : "")).join("\n"),
     hadDoelen, hadVerloop
   };
@@ -92,13 +102,18 @@ function ontleedLinks(md, verschuiving = 0, chips = false) {
 export function lijnNaarRegel(lijn, { chips = false } = {}) {
   let rest = lijn.replace(/\s+$/, "");
   let opsomming = -1;
-  const op = rest.match(/^(\s*)[-–•]\s+(.*)$/);
-  if (op) { opsomming = op[1].length >= 2 ? 1 : 0; rest = op[2]; }
+  const op = rest.match(/^([ \t]*)([-–•◦▪])(?:\s+(.*))?$/);
+  if (op) {
+    const ruimte = op[1].replace(/\t/g, INSPRING).length;
+    opsomming = ruimte >= 6 ? 2 : ruimte >= 2 ? 1 : 0;
+    rest = (op[3] || "").trim();
+  }
   else rest = rest.trim();
   let kleur = null;
   if (rest.startsWith(ROOD)) { kleur = "rood"; rest = rest.slice(ROOD.length).trim(); }
   else if (rest.startsWith(GROEN)) { kleur = "groen"; rest = rest.slice(GROEN.length).trim(); }
-  const voorvoegsel = opsomming >= 0 ? "- " : "";
+  // echte opsomming in Docs: tabs vooraan bepalen het niveau (createParagraphBullets haalt ze weg)
+  const voorvoegsel = opsomming >= 0 ? "\t".repeat(opsomming) : "";
   const { tekst, links, chips: chipLijst } = ontleedLinks(rest, voorvoegsel.length, chips);
   const text = voorvoegsel + tekst;
   const fase = opsomming < 0 && /^(Inl|Kern|Slot)\.?$/i.test(tekst);
@@ -120,8 +135,9 @@ export function veldenNaarRegels(v, { chips = false } = {}) {
   inhoud.push(label);
   const leeg = () => ({ text: "", bold: [], underline: [], kleur: null, links: [], opsomming: -1 });
   const kop = (t) => ({ text: t, bold: [[0, t.length]], underline: [], kleur: null, links: [], opsomming: -1 });
-  const doelen = trimLeeg(lijnen(v.doelen));
-  const verloop = trimLeeg(lijnen(v.verloop));
+  const doelen = zonderLegeOpsomming(lijnen(v.doelen));
+  const verloop = zonderLegeFasen(zonderLegeOpsomming(lijnen(v.verloop)));
+  const therapie = trimLeeg(lijnen(v.therapie)).filter(l => l.trim());
   if (doelen.length || v.hadDoelen) {
     inhoud.push(leeg(), kop("Doelen:"));
     doelen.forEach(l => inhoud.push(l.trim() ? lijnNaarRegel_(l) : leeg()));
@@ -130,11 +146,30 @@ export function veldenNaarRegels(v, { chips = false } = {}) {
     inhoud.push(leeg(), kop("Verloop:"));
     verloop.forEach(l => inhoud.push(l.trim() ? lijnNaarRegel_(l) : leeg()));
   }
+  // therapieën en afwezigheden: groen, onderaan de cel
+  for (const t of therapie) {
+    const regel = lijnNaarRegel_(t.replace(/^\s*(🟢\s*)?/, ""));
+    regel.kleur = "groen"; regel.opsomming = -1;
+    inhoud.push(regel);
+  }
   return {
     vak: [{ text: v.vak.trim(), bold: [], underline: [], kleur: null, links: [], opsomming: -1 }],
     inhoud,
-    materiaal: trimLeeg(lijnen(v.materiaal)).map(l => l.trim() ? lijnNaarRegel_(l) : leeg())
+    materiaal: zonderLegeOpsomming(lijnen(v.materiaal)).map(l => l.trim() ? lijnNaarRegel_(l) : leeg())
   };
+}
+
+const isLegeOpsomming = (l) => /^[ \t]*[-–•◦▪][ \t]*$/.test(l);
+function zonderLegeOpsomming(ls) { return trimLeeg(ls.filter(l => !isLegeOpsomming(l))); }
+// "Inl", "Kern" of "Slot" zonder iets eronder valt weg
+function zonderLegeFasen(ls) {
+  const fase = (l) => /^\s*(Inl|Kern|Slot)\.?\s*$/i.test(l);
+  const uit = ls.filter((l, i) => {
+    if (!fase(l)) return true;
+    for (let j = i + 1; j < ls.length && !fase(ls[j]); j++) if (ls[j].trim()) return true;
+    return false;
+  });
+  return trimLeeg(uit);
 }
 
 // Welke cellen zijn gewijzigd?
@@ -143,7 +178,8 @@ export function gewijzigdeCellen(origineel, nieuw) {
   if (origineel.vak.trim() !== nieuw.vak.trim()) uit.push("vak");
   if (origineel.onderwerp.trim() !== nieuw.onderwerp.trim() ||
       trimLeeg(lijnen(origineel.doelen)).join("\n") !== trimLeeg(lijnen(nieuw.doelen)).join("\n") ||
-      trimLeeg(lijnen(origineel.verloop)).join("\n") !== trimLeeg(lijnen(nieuw.verloop)).join("\n")) uit.push("inhoud");
+      trimLeeg(lijnen(origineel.verloop)).join("\n") !== trimLeeg(lijnen(nieuw.verloop)).join("\n") ||
+      trimLeeg(lijnen(origineel.therapie)).join("\n") !== trimLeeg(lijnen(nieuw.therapie)).join("\n")) uit.push("inhoud");
   if (trimLeeg(lijnen(origineel.materiaal)).join("\n") !== trimLeeg(lijnen(nieuw.materiaal)).join("\n")) uit.push("materiaal");
   return uit;
 }
@@ -169,6 +205,7 @@ export function celVerzoeken(bereik, regels, { stijlHerstellen = true, kleuren =
 
   let pos = start;
   const chipPosities = [];
+  const groepen = [];
   for (const regel of regels) {
     const n = regel.text.length;
     if (n) {
@@ -185,18 +222,23 @@ export function celVerzoeken(bereik, regels, { stijlHerstellen = true, kleuren =
           fields: "link,underline,foregroundColor" } });
       }
     }
+    // aaneengesloten opsommingsregels vormen één lijst
     if (regel.opsomming >= 0) {
-      const inspringing = 18 + 18 * regel.opsomming;
-      reqs.push({ updateParagraphStyle: { range: r(pos, pos + n + 1),
-        paragraphStyle: { indentStart: { magnitude: inspringing, unit: "PT" }, indentFirstLine: { magnitude: inspringing - 10, unit: "PT" } },
-        fields: "indentStart,indentFirstLine" } });
+      const laatste = groepen[groepen.length - 1];
+      if (laatste && laatste.eindNl === pos - 1) laatste.eindNl = pos + n;
+      else groepen.push({ start: pos, eindNl: pos + n });
     }
     for (const c of regel.chips || []) chipPosities.push({ index: pos + c.pos, url: c.url });
     pos += n + 1;
   }
-  // Drive-chips als laatste, van achter naar voor (elke chip neemt één positie in)
+  // Drive-chips van achter naar voor (elke chip neemt één positie in)
   chipPosities.sort((a, b) => b.index - a.index);
   for (const c of chipPosities) reqs.push({ insertRichLink: { location: { index: c.index }, richLinkProperties: { uri: c.url } } });
+  // Daarna de opsommingen, ook van achter naar voor: de tabs vooraan worden niveaus en verdwijnen.
+  const na = (i, totEnMet) => i + chipPosities.filter(c => totEnMet ? c.index <= i : c.index < i).length;
+  for (const g of groepen.reverse()) {
+    reqs.push({ createParagraphBullets: { range: r(na(g.start, false), na(g.eindNl, true)), bulletPreset: "BULLET_DISC_CIRCLE_SQUARE" } });
+  }
   return reqs;
 }
 

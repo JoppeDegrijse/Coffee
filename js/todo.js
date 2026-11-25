@@ -95,7 +95,9 @@ export function groepeer(todos, nu) {
   const zichtbaar = todos.filter(t => !t.verwijderd);
   const open = zichtbaar.filter(t => !t.klaar);
   const gemist = open.filter(t => t.gepland && isVoorbij(t.gepland, nu));
-  const teplannen = open.filter(t => !t.gepland).concat(gemist)
+  const opDeadline = (a, b) => (a.deadline || "9999").localeCompare(b.deadline || "9999") || a.aangemaakt - b.aangemaakt;
+  gemist.sort((a, b) => a.gepland.datum.localeCompare(b.gepland.datum) || a.gepland.start - b.gepland.start || opDeadline(a, b));
+  const teplannen = open.filter(t => !t.gepland)
     .sort((a, b) => (a.deadline || "9999").localeCompare(b.deadline || "9999") || a.aangemaakt - b.aangemaakt);
   const perSlot = new Map();
   for (const t of open.filter(t => t.gepland && !isVoorbij(t.gepland, nu))) {
@@ -117,5 +119,5 @@ export function inBlok(todos, iso, start, soort) {
 
 export function aantalOpen(todos, nu) {
   const g = groepeer(todos, nu);
-  return g.teplannen.length;
+  return g.teplannen.length + g.gemist.length;
 }

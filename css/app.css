@@ -752,3 +752,6 @@ main.weergave-week .weekraster { gap: 22px 18px; }
 .lesresultaat-titel { font-weight: 700; }
 .lesresultaat-regel { font-size: .9rem; color: var(--tekst-zacht); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 560px) { .lesresultaat { grid-template-columns: 1fr; } .lesresultaat-wanneer { flex-direction: row; gap: 8px; } }
+.gemist-kop { color: var(--rood); display: flex; align-items: center; gap: 8px; }
+.teller-rood { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; background: var(--rood); color: var(--oppervlak); font-size: .8rem; }
+.gemist-lijst { border-left: 4px solid var(--rood); }

@@ -1077,7 +1077,12 @@ async function toonTodo(doel) {
       const uit = [];
       uit.push(h("h3", { class: "sectie" }, "Nog in te plannen"));
       uit.push(g.teplannen.length ? h("ul", { class: "todolijst kaart" }, g.teplannen.map(t => todoItem(t)))
-        : h("p", { class: "klein" }, "Alles heeft een moment gekregen. ☕"));
+        : h("p", { class: "klein" }, g.gemist.length ? "Geen nieuwe to-do's zonder moment." : "Alles heeft een moment gekregen. ☕"));
+      if (g.gemist.length) {
+        uit.push(h("h3", { class: "sectie gemist-kop" }, "Gemist ", h("span", { class: "teller-rood" }, String(g.gemist.length))));
+        uit.push(h("p", { class: "klein" }, "Het blok is voorbij en de to-do is nog niet klaar. Plan hem opnieuw in of vink hem af."));
+        uit.push(h("ul", { class: "todolijst kaart gemist-lijst" }, g.gemist.map(t => todoItem(t))));
+      }
       if (g.gepland.length) {
         uit.push(h("h3", { class: "sectie" }, "Ingepland"));
         for (const groep of g.gepland) {

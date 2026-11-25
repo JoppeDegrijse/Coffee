@@ -18,7 +18,39 @@
 </head>
 <body>
 <div id="app">
-  <div class="startscherm"><div class="beker draait">☕</div><p>Coffee! wordt gezet…</p></div>
+  <div class="startscherm koffie-laden" role="status">
+    <svg class="koffiekop" width="180" height="180" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" overflow="visible" aria-hidden="true">
+      <defs><clipPath id="kopOpening"><ellipse cx="96" cy="95" rx="43" ry="15"/></clipPath></defs>
+      <!-- schotel -->
+      <ellipse cx="98" cy="166" rx="68" ry="17" class="kk-schotel-onder"/>
+      <ellipse cx="98" cy="163" rx="68" ry="16" class="kk-schotel" stroke-width="2.2"/>
+      <ellipse cx="98" cy="162" rx="42" ry="9.5" class="kk-schotel-onder" opacity=".65"/>
+      <!-- oor -->
+      <path d="M 140 105 C 166 105, 166 142, 136 144" class="kk-lijn" stroke-width="11" stroke-linecap="round"/>
+      <path d="M 140 105 C 166 105, 166 142, 136 144" class="kk-oor-binnen" stroke-width="7.5" stroke-linecap="round"/>
+      <!-- kopje -->
+      <path d="M 49 95 C 49 144, 68 164, 96 164 C 124 164, 143 144, 143 95 Z" class="kk-kop" stroke-width="2.2"/>
+      <path d="M 122 97 C 122 141, 111 160, 96 163 C 123 163, 142 143, 142 95 Z" class="kk-schaduw" opacity=".55"/>
+      <!-- rand en binnenkant -->
+      <ellipse cx="96" cy="95" rx="47" ry="18" class="kk-rand" stroke-width="2.2"/>
+      <ellipse cx="96" cy="95" rx="43" ry="15" class="kk-schaduw"/>
+      <!-- koffie -->
+      <g clip-path="url(#kopOpening)">
+        <g class="kk-vloeistof">
+          <ellipse cx="96" cy="96" rx="44" ry="16" class="kk-koffie"/>
+          <ellipse cx="96" cy="99" rx="38" ry="11" class="kk-koffie-midden" opacity=".55"/>
+          <ellipse cx="96" cy="96" rx="22" ry="7" class="kk-rimpel kk-rimpel-1"/>
+          <ellipse cx="96" cy="96" rx="32" ry="10.5" class="kk-rimpel kk-rimpel-2"/>
+        </g>
+      </g>
+      <ellipse cx="96" cy="95" rx="43" ry="15" class="kk-lijn" stroke-width="1.8"/>
+      <!-- straal en stoom -->
+      <line x1="96" y1="14" x2="96" y2="96" class="kk-straal" stroke-width="6" stroke-linecap="round"/>
+      <path class="kk-stoom kk-stoom-links" d="M 84 74 C 77 62, 91 52, 84 38"/>
+      <path class="kk-stoom kk-stoom-rechts" d="M 108 74 C 101 62, 115 52, 108 38"/>
+    </svg>
+    <p class="koffie-tekst">Koffie wordt gezet…</p>
+  </div>
 </div>
 <noscript>Coffee! heeft JavaScript nodig.</noscript>
 </body>

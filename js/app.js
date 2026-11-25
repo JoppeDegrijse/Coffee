@@ -2409,6 +2409,13 @@ function toonFout(doel, e) {
   }
 }
 
+// Het laadscherm (kopje dat volloopt) staat in index.html; bij de eerste start bewaren we het om later opnieuw te tonen
+const laadSjabloon = document.querySelector("#app .koffie-laden")?.cloneNode(true);
+function laadScherm() {
+  if (laadSjabloon) $("app").replaceChildren(laadSjabloon.cloneNode(true));
+  else $("app").replaceChildren(h("div", { class: "startscherm" }, h("div", { class: "beker" }, "☕"), h("p", {}, "Koffie wordt gezet…")));
+}
+
 function startScherm(boodschap) {
   $("app").replaceChildren(
     h("div", { class: "startscherm" },
@@ -2433,7 +2440,7 @@ async function start(viaKlik) {
       }
       await G.meldAan();
     }
-    $("app").replaceChildren(h("div", { class: "startscherm" }, h("div", { class: "beker draait" }, "☕"), h("p", {}, "Agenda zetten…")));
+    laadScherm();
     staat.gebruiker = await G.gebruiker();
     G.onthoudAccount(staat.gebruiker.emailAddress);
     await D.laad();

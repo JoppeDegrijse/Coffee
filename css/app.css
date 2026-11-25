@@ -135,8 +135,52 @@ main { max-width: 1100px; margin: 0 auto; padding: 20px 18px 64px; }
 .startscherm h1 { margin: 8px 0 0; font-size: 2.6rem; font-weight: 800; letter-spacing: -.03em; }
 .startscherm p { color: var(--tekst-zacht); }
 .beker { font-size: 4rem; }
-.beker.draait { animation: walm 1.6s ease-in-out infinite; }
-@keyframes walm { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+
+/* ---------- Laadscherm: kopje dat volloopt ---------- */
+.koffie-laden { gap: 6px; }
+.koffie-tekst { font-family: var(--titel); font-weight: 500; letter-spacing: .04em; animation: tekstPuls 2.25s ease-in-out infinite; }
+.koffiekop { --kk-kop: #fff; --kk-schaduw: #eae4dd; --kk-rand: #f8f5f1; --kk-lijn: #c5bbb1;
+  --kk-schotel: #faf7f4; --kk-schotel-onder: #e0d9d1; --kk-koffie: #4a2811; --kk-koffie-midden: #693a1a; }
+.kk-kop { fill: var(--kk-kop); stroke: var(--kk-lijn); }
+.kk-schaduw { fill: var(--kk-schaduw); }
+.kk-rand { fill: var(--kk-rand); stroke: var(--kk-lijn); }
+.kk-lijn { fill: none; stroke: var(--kk-lijn); }
+.kk-oor-binnen { fill: none; stroke: var(--kk-kop); }
+.kk-schotel { fill: var(--kk-schotel); stroke: var(--kk-lijn); }
+.kk-schotel-onder { fill: var(--kk-schotel-onder); }
+.kk-koffie { fill: var(--kk-koffie); }
+.kk-koffie-midden { fill: var(--kk-koffie-midden); }
+.kk-straal { stroke: var(--kk-koffie); stroke-dasharray: 96; stroke-dashoffset: 96; animation: schenk 4.5s cubic-bezier(.4, 0, .2, 1) infinite; }
+.kk-vloeistof { transform: translateY(34px); animation: vulKop 4.5s cubic-bezier(.35, 0, .25, 1) infinite; }
+.kk-rimpel { fill: none; stroke: var(--karamel); stroke-width: 1.8; transform-origin: 96px 96px; opacity: 0; animation: rimpel 4.5s ease-out infinite; }
+.kk-rimpel-2 { animation-delay: .35s; }
+.kk-stoom { fill: none; stroke: var(--tekst-zacht); stroke-width: 4.2; stroke-linecap: round; opacity: 0; animation: stoom 4.5s ease-in-out infinite; }
+.kk-stoom-rechts { animation-delay: .3s; }
+@keyframes schenk {
+  0% { stroke-dashoffset: 96; opacity: 0; }
+  8% { opacity: 1; }
+  18%, 58% { stroke-dashoffset: 0; opacity: 1; }
+  68%, 100% { stroke-dashoffset: -96; opacity: 0; }
+}
+@keyframes vulKop { 0%, 12% { transform: translateY(34px); } 62%, 84% { transform: translateY(0); } 95%, 100% { transform: translateY(34px); } }
+@keyframes rimpel {
+  0%, 16% { opacity: 0; transform: scale(.25); }
+  24% { opacity: .9; }
+  42%, 46% { opacity: 0; transform: scale(1.15); }
+  54% { opacity: .8; }
+  70%, 100% { opacity: 0; transform: scale(1.15); }
+}
+@keyframes stoom {
+  0%, 50% { opacity: 0; transform: translateY(10px) scaleY(.85); }
+  62% { opacity: .85; }
+  84%, 100% { opacity: 0; transform: translateY(-16px) scaleY(1.1); }
+}
+@keyframes tekstPuls { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+/* Minder beweging: een vol kopje met stoom, zonder animatie */
+@media (prefers-reduced-motion: reduce) {
+  .kk-vloeistof { transform: none; }
+  .kk-stoom { opacity: .7; }
+}
 
 /* ---------- Knoppen, velden, meldingen ---------- */
 .knop {

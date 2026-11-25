@@ -294,6 +294,35 @@ export async function gegevensBestand() {
   return bestanden[0] ? { id: bestanden[0].id, versie: bestanden[0].version } : { id: null, versie: null };
 }
 
+// Ander eigen bestand in de map Coffee! (bv. de leerlijn): lezen en (over)schrijven
+export async function leesEigenBestand(naam) {
+  if (!gegevensMapId) await gegevensBestand();
+  if (!gegevensMapId) return null;
+  const b = await eigenZoek("name = '" + naam.replace(/'/g, "\\'") + "' and '" + gegevensMapId + "' in parents");
+  if (!b[0]) return null;
+  return { id: b[0].id, inhoud: await (await verzoek(DRIVE + "files/" + b[0].id + "?alt=media")).json() };
+}
+export async function schrijfEigenBestand(naam, inhoud) {
+  if (!gegevensMapId) await gegevensBestand();
+  const tekst = JSON.stringify(inhoud);
+  if (gegevensMapId) {
+    const b = await eigenZoek("name = '" + naam.replace(/'/g, "\\'") + "' and '" + gegevensMapId + "' in parents");
+    if (b[0]) {
+      await json(UPLOAD + "/" + b[0].id + "?uploadType=media&fields=id", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: tekst });
+      return b[0].id;
+    }
+  } else {
+    const map = await postJson(DRIVE + "files?fields=id", { name: GEGEVENS_MAP, mimeType: MAP_TYPE, parents: ["root"] });
+    gegevensMapId = map.id;
+  }
+  const grens = "coffee" + Math.random().toString(36).slice(2);
+  const body = "--" + grens + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" +
+    JSON.stringify({ name: naam, mimeType: "application/json", parents: [gegevensMapId] }) +
+    "\r\n--" + grens + "\r\nContent-Type: application/json\r\n\r\n" + tekst + "\r\n--" + grens + "--";
+  const r = await json(UPLOAD + "?uploadType=multipart&fields=id", { method: "POST", headers: { "Content-Type": "multipart/related; boundary=" + grens }, body });
+  return r.id;
+}
+
 export async function gegevensVersie(id) {
   return (await json(DRIVE + "files/" + id + "?fields=version")).version;
 }

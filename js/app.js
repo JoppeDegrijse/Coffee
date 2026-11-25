@@ -7,6 +7,7 @@ import * as D from "./gegevens.js";
 import * as E from "./evaluatie.js";
 import * as N from "./notities.js";
 import * as H from "./huiswerk.js";
+import * as L from "./doelen.js";
 
 // ---------- Instellingen (in deze browser) ----------
 const INST_SLEUTEL = "coffee_instellingen";
@@ -660,6 +661,8 @@ async function afmelden() {
   if (D.heeftOnbewaard()) { toast("Even geduld", "Coffee! bewaart nog je laatste wijziging"); return; }
   G.meldAf();
   D.wisLokaal();
+  try { localStorage.removeItem(LEERLIJN_LOKAAL); } catch (e) { /* niets */ }
+  staat.leerlijn = null; staat.leerlijnGecontroleerd = false;
   try { sessionStorage.clear(); } catch (e) { /* niets */ }
   location.reload();
 }
@@ -1494,6 +1497,346 @@ function openExtraHuistaak() {
   setTimeout(() => titel.focus(), 0);
 }
 
+// ---------- Doelen (leerlijn WO) ----------
+const LEERLIJN_NAAM = "Coffee! leerlijn WO.json";
+const LEERLIJN_LOKAAL = "coffee_leerlijn";
+const du = { zoek: "", leerlijn: "alle", nogNiet: false, selectie: new Set(), thema: null, open: new Set(), dekking: false };
+
+function lokaleLeerlijn() {
+  if (staat.leerlijn === undefined || staat.leerlijn === null) {
+    try { const x = JSON.parse(localStorage.getItem(LEERLIJN_LOKAAL) || "null"); if (L.isLeerlijn(x)) staat.leerlijn = x; } catch (e) { /* leeg */ }
+  }
+  return staat.leerlijn || null;
+}
+function zetLeerlijn(x) {
+  staat.leerlijn = x; staat.leerlijnIndex = L.index(x);
+  try { localStorage.setItem(LEERLIJN_LOKAAL, JSON.stringify(x)); } catch (e) { /* te groot: enkel in geheugen */ }
+}
+// Eén keer per sessie de leerlijn op Drive controleren (bron = Drive)
+async function controleerLeerlijn() {
+  if (staat.leerlijnGecontroleerd) return;
+  staat.leerlijnGecontroleerd = true;
+  try {
+    const b = await G.leesEigenBestand(LEERLIJN_NAAM);
+    if (b && L.isLeerlijn(b.inhoud)) {
+      const nieuw = JSON.stringify(b.inhoud) !== JSON.stringify(staat.leerlijn);
+      zetLeerlijn(b.inhoud);
+      if (nieuw && staat.weergave === "doelen") toon();
+    } else if (!b && staat.leerlijn) {
+      // de kopie op dit toestel staat nog niet op Drive (bv. eerste keer): bewaren
+      await G.schrijfEigenBestand(LEERLIJN_NAAM, staat.leerlijn);
+    }
+  } catch (e) { staat.leerlijnGecontroleerd = false; console.warn("Leerlijn controleren mislukt", e); }
+}
+const leerlijnIdx = () => { if (!staat.leerlijnIndex && staat.leerlijn) staat.leerlijnIndex = L.index(staat.leerlijn); return staat.leerlijnIndex || new Map(); };
+const bouwKeuze = () => staat.inst.bouw || "";
+
+async function laadLeerlijnBestand(bestand, opBezig) {
+  let x;
+  try { x = JSON.parse(await bestand.text()); } catch (e) { throw new Error("Dit is geen leesbaar leerlijnbestand (json)."); }
+  if (!L.isLeerlijn(x)) throw new Error("Dit bestand is geen Coffee!-leerlijn. Kies het bestand \"leerlijn WO … .json\".");
+  opBezig && opBezig();
+  await G.schrijfEigenBestand(LEERLIJN_NAAM, x);
+  zetLeerlijn(x);
+  staat.leerlijnGecontroleerd = true;
+}
+
+function leerlijnLaadKnop(tekst, klasse = "knop") {
+  const invoer = h("input", { type: "file", accept: ".json,application/json", class: "sr-only", "aria-label": "Leerlijnbestand kiezen" });
+  const knop = h("button", { class: klasse, onclick: () => invoer.click() }, tekst);
+  invoer.addEventListener("change", async () => {
+    const f = invoer.files[0]; if (!f) return;
+    knop.disabled = true; knop.textContent = "Lezen…";
+    try { await laadLeerlijnBestand(f, () => { knop.textContent = "Bewaren op je Drive…"; }); toast("Leerlijn geladen", "Bewaard in je map Coffee! op Drive"); staat.weergave = "doelen"; toon(); }
+    catch (e) { knop.disabled = false; knop.textContent = tekst; toast("Niet gelukt", e.message || String(e)); }
+  });
+  return h("span", {}, knop, invoer);
+}
+
+// Tekst met <mark> rond de zoekwoorden (accenten en hoofdletters tellen niet)
+function markeer(tekst, termen) {
+  if (!termen.length || !tekst) return [tekst];
+  let norm = "", map = [];
+  for (let i = 0; i < tekst.length; i++) {
+    const n = L.normaal(tekst[i]) || (tekst[i] === " " ? " " : "");
+    for (const c of n) { norm += c; map.push(i); }
+  }
+  const stukken = [];
+  for (const w0 of termen) {
+    const w = norm.includes(w0) ? w0 : L.stam(w0);
+    if (!w) continue;
+    let p = norm.indexOf(w); while (p >= 0) { stukken.push([map[p], map[p + w.length - 1] + 1]); p = norm.indexOf(w, p + 1); }
+  }
+  if (!stukken.length) return [tekst];
+  stukken.sort((a, b) => a[0] - b[0]);
+  const samen = [];
+  for (const s of stukken) { if (samen.length && s[0] <= samen[samen.length - 1][1]) samen[samen.length - 1][1] = Math.max(samen[samen.length - 1][1], s[1]); else samen.push([...s]); }
+  const uit = []; let pos = 0;
+  for (const [a, b] of samen) { if (a > pos) uit.push(tekst.slice(pos, a)); uit.push(h("mark", {}, tekst.slice(a, b))); pos = b; }
+  if (pos < tekst.length) uit.push(tekst.slice(pos));
+  return uit;
+}
+const meerRegels = (tekst, termen) => tekst.split("\n").flatMap((r, i) => i ? [h("br"), ...markeer(r, termen)] : markeer(r, termen));
+
+// Actieve selectie: een bewaard thema of de losse selectie
+function actiefThema() {
+  if (!du.thema) return null;
+  const t = (D.data().themas || []).find(x => x.id === du.thema && !x.verwijderd);
+  if (!t) du.thema = null;
+  return t || null;
+}
+const gekozen = () => { const t = actiefThema(); return new Set(t ? t.doelen : du.selectie); };
+function zetGekozen(id, aan) {
+  const t = actiefThema();
+  if (t) D.wijzig(g => { const x = g.themas.find(y => y.id === t.id); if (x) L.wisselDoel(x, id, aan); });
+  else { if (aan) du.selectie.add(id); else du.selectie.delete(id); werkDoelenBij(); }
+}
+
+let werkDoelenBij = () => {};
+
+function toonDoelen(doel) {
+  const ll = lokaleLeerlijn();
+  controleerLeerlijn();
+  if (!ll) {
+    doel.replaceChildren(
+      h("div", { class: "nu-kop" }, h("h2", {}, "Doelen")),
+      h("div", { class: "kaart leeg-staat" },
+        h("h3", {}, "Leerlijn laden"),
+        h("p", {}, "Kies het leerlijnbestand (json) dat je van Claude kreeg. Coffee! bewaart het in je map Coffee! op je eigen Drive; het komt niet in de openbare code."),
+        leerlijnLaadKnop("Leerlijnbestand kiezen…")));
+    return;
+  }
+  const idx = leerlijnIdx();
+  const termen = L.zoektermen(du.zoek);
+  let bouw = bouwKeuze();
+
+  const zoekveld = h("input", { type: "search", class: "doelen-zoek", value: du.zoek, placeholder: "Zoek in doelen en suggesties, bv. kaart, gevoelens, magneet…", "aria-label": "Zoek in de doelen" });
+  let zoekTimer;
+  zoekveld.addEventListener("input", () => { clearTimeout(zoekTimer); zoekTimer = setTimeout(() => { du.zoek = zoekveld.value; tekenBoom(); }, 160); });
+  zoekveld.addEventListener("keydown", (e) => { if (e.key === "Escape" && zoekveld.value) { e.preventDefault(); zoekveld.value = ""; du.zoek = ""; tekenBoom(); } });
+
+  const knopjes = (opties, waarde, zet, label) => h("div", { class: "filter", role: "group", "aria-label": label },
+    opties.map(([k, t]) => h("button", { class: "filterknop" + (waarde() === k ? " actief" : ""), "aria-pressed": waarde() === k ? "true" : "false",
+      onclick: (e) => { zet(k); e.currentTarget.parentNode.querySelectorAll(".filterknop").forEach(b => { const a = b === e.currentTarget; b.classList.toggle("actief", a); b.setAttribute("aria-pressed", a ? "true" : "false"); }); tekenBoom(); } }, t)));
+  const filters = h("div", { class: "doelen-filters" },
+    knopjes([["alle", "Alle"], ...ll.leerlijnen.map(l => [l.id, l.naam])], () => du.leerlijn, (k) => { du.leerlijn = k; }, "Leerlijn"),
+    knopjes([["", "Alle bouwen"], ...L.BOUWEN.map(b => [b, b])], bouwKeuze, (k) => { staat.inst.bouw = k; bewaarInstellingen(); }, "Bouw"),
+    h("label", { class: "schakel" }, (() => { const c = h("input", { type: "checkbox", checked: du.nogNiet || null }); c.addEventListener("change", () => { du.nogNiet = c.checked; tekenBoom(); }); return c; })(), " Enkel nog niet behandeld"));
+
+  const boom = h("section", { class: "doelen-boom", "aria-label": "Leerlijn" });
+  const teller = h("p", { class: "klein doelen-teller", role: "status" });
+  const kader = h("aside", { class: "doelen-kader", "aria-label": "Geselecteerde doelen" });
+  const kaderKnop = h("button", { class: "knop doelen-kaderknop", onclick: () => kader.classList.toggle("open") });
+
+  // ---- de boom ----
+  const rijen = new Map(); // id -> { vink, badges }
+  function badges(id) {
+    const dek = L.dekking(D.data(), ll.schooljaar);
+    const lijst = dek.get(id) || [];
+    return lijst.map(t => h("button", { class: "themachip" + (t.id === du.thema ? " actief" : ""), title: "Thema " + t.naam + " openen",
+      onclick: (e) => { e.preventDefault(); e.stopPropagation(); du.thema = t.id; werkDoelenBij(); } }, t.naam));
+  }
+  function vinkje(id, label) {
+    const c = h("input", { type: "checkbox", class: "doelvink", "aria-label": label, "data-id": id });
+    c.checked = gekozen().has(id);
+    c.addEventListener("click", (e) => e.stopPropagation());
+    c.addEventListener("change", () => zetGekozen(id, c.checked));
+    return c;
+  }
+  function suggestiesBlok(houder, zichtbaar) {
+    const blokken = L.suggestiesVoor(houder, bouw);
+    if (!blokken.length) return null;
+    const lijst = h("div", { class: "sugblokken" }, blokken.map(b => h("div", { class: "sugblok" },
+      (!bouw || !b.bouw.length) ? h("div", { class: "bouwlabels" }, b.bouw.length ? b.bouw.map(x => h("span", { class: "bouwlabel", title: L.BOUW_NAAM[x] }, x)) : h("span", { class: "bouwlabel alle" }, "alle bouwen")) : null,
+      h("ul", {}, b.items.map(i => h("li", { class: (i.s ? "sug-" + i.s : "") + (i.n ? " sub" : "") }, i.s === "methode" ? "📘 " : "", ...markeer(i.t, termen)))))));
+    const aantal = blokken.reduce((n, b) => n + b.items.length, 0);
+    const d = h("details", { class: "suggesties" }, h("summary", {}, "Suggesties" + (bouw ? " " + bouw : "") + " (" + aantal + ")"), lijst);
+    if (zichtbaar) d.open = true;
+    return d;
+  }
+  function doelKaart(leer, d, treffer) {
+    const sleutel = leer.id + "|" + (d.nr || d.tekst);
+    const id = d.nr ? L.doelId(leer.id, d.nr) : null;
+    const tussenIds = (d.tussendoelen || []).map(t => L.doelId(leer.id, t.nr));
+    const kop = h("summary", { class: "doelkop" },
+      id ? vinkje(id, "Hoofddoel " + d.nr + " selecteren") : h("span", { class: "doelvink-leeg" }),
+      h("span", { class: "doelnr" + (d.extra ? " extra" : "") }, d.nr || "+"),
+      h("span", { class: "doeltekst" }, ...meerRegels(d.tekst, termen)),
+      h("span", { class: "doelmeta" }, id ? h("span", { class: "badges", "data-id": id }) : null,
+        tussenIds.length ? h("span", { class: "tussenteller", "data-tussen": tussenIds.join(" ") }) : null));
+    const details = h("details", { class: "doel" + (d.extra ? " extra" : "") }, kop);
+    let gevuld = false;
+    const vul = () => {
+      if (gevuld) return; gevuld = true;
+      details.append(h("div", { class: "doelbody" },
+        d.toelichting ? h("p", { class: "toelichting" }, ...meerRegels(d.toelichting, termen)) : null,
+        (d.tussendoelen || []).length ? h("ol", { class: "tussendoelen" }, d.tussendoelen.map(t => {
+          const tid = L.doelId(leer.id, t.nr);
+          const gevonden = treffer && treffer.tussen && treffer.tussen.has(t.nr);
+          return h("li", { class: "tussendoel" + (gevonden && termen.length ? " treffer" : "") },
+            h("label", { class: "tussenkop" }, vinkje(tid, "Tussendoel " + t.nr + " selecteren"),
+              h("span", { class: "doelnr klein-nr" }, t.nr), h("span", { class: "doeltekst" }, ...meerRegels(t.tekst, termen)),
+              h("span", { class: "badges", "data-id": tid })),
+            suggestiesBlok(t, termen.length && treffer && treffer.tussenSug && treffer.tussenSug.has(t.nr)));
+        })) : null,
+        suggestiesBlok(d, termen.length && treffer && treffer.sug)));
+      werkRijenBij(details);
+    };
+    details.addEventListener("toggle", () => { if (details.open) { vul(); du.open.add(sleutel); } else du.open.delete(sleutel); });
+    if (du.open.has(sleutel) || (termen.length && treffer && (treffer.sug || treffer.tussen.size))) { details.open = true; vul(); }
+    return details;
+  }
+  function werkRijenBij(binnen = boom) {
+    const g = gekozen();
+    binnen.querySelectorAll(".badges[data-id]").forEach(b => b.replaceChildren(...badges(b.dataset.id)));
+    binnen.querySelectorAll(".tussenteller[data-tussen]").forEach(el => {
+      const ids = el.dataset.tussen.split(" ");
+      const dek = L.dekking(D.data(), ll.schooljaar);
+      const n = ids.filter(i => dek.has(i)).length, k = ids.filter(i => g.has(i)).length;
+      el.textContent = (k ? "✓ " + k + " gekozen · " : "") + n + "/" + ids.length + " tussendoelen behandeld";
+      el.classList.toggle("leeg", !n && !k);
+    });
+    binnen.querySelectorAll("input.doelvink[data-id]").forEach(c => { c.checked = g.has(c.dataset.id); });
+  }
+  function tekenBoom() {
+    bouw = bouwKeuze();
+    const dek = L.dekking(D.data(), ll.schooljaar);
+    const termenNu = L.zoektermen(du.zoek);
+    termen.splice(0, termen.length, ...termenNu);
+    let gevonden = 0;
+    const delen = [];
+    for (const leer of ll.leerlijnen) {
+      if (du.leerlijn !== "alle" && du.leerlijn !== leer.id) continue;
+      const domeinen = [];
+      for (const dm of leer.domeinen) {
+        const rubrieken = [];
+        let totaal = 0, behandeld = 0, inDomein = 0;
+        for (const r of dm.rubrieken) {
+          const kaarten = [];
+          for (const d of r.doelen) {
+            const tel = d.nr || (d.tussendoelen || []).length;
+            const isBehandeld = L.hoofddoelBehandeld(leer.id, d, dek);
+            if (tel) { totaal++; if (isBehandeld) behandeld++; }
+            if (du.nogNiet && isBehandeld) continue;
+            const treffer = L.zoekInDoel(d, termen, bouw);
+            if (!treffer) continue;
+            kaarten.push(doelKaart(leer, d, termen.length ? treffer : null));
+            inDomein++;
+          }
+          if (kaarten.length) rubrieken.push(h("div", { class: "rubriek" },
+            r.naam ? h("h4", { class: "rubriekkop" }, r.groep ? h("span", { class: "groep" }, r.groep + " › ") : null, r.naam) : null,
+            r.noot ? h("p", { class: "noot" }, r.noot) : null, kaarten));
+        }
+        gevonden += inDomein;
+        if (!rubrieken.length) continue;
+        const sleutel = "dm|" + leer.id + "|" + dm.naam;
+        const det = h("details", { class: "domein" },
+          h("summary", {}, h("span", { class: "domeinnaam" }, dm.naam),
+            h("span", { class: "domeinmeta" }, termen.length || du.nogNiet ? inDomein + " getoond · " : "", behandeld + "/" + totaal + " behandeld",
+              h("span", { class: "meter", "aria-hidden": "true" }, h("span", { style: "width:" + (totaal ? Math.round(100 * behandeld / totaal) : 0) + "%" })))),
+          dm.noot ? h("p", { class: "noot" }, dm.noot) : null, rubrieken);
+        det.open = du.open.has(sleutel) || termen.length > 0 || du.nogNiet;
+        det.addEventListener("toggle", () => { if (det.open) du.open.add(sleutel); else du.open.delete(sleutel); });
+        domeinen.push(det);
+      }
+      if (domeinen.length) delen.push(h("div", { class: "leerlijnblok" }, h("h3", {}, leer.naam), domeinen));
+    }
+    boom.replaceChildren(...(delen.length ? delen : [h("div", { class: "kaart leeg-staat" }, h("p", {}, termen.length ? "Niets gevonden voor “" + du.zoek + "”. Probeer een ander woord of zet de bouw op “Alle bouwen”." : "Alle doelen zijn al behandeld in een thema. 🎉"))]));
+    teller.textContent = termen.length ? gevonden + (gevonden === 1 ? " doel gevonden" : " doelen gevonden") : "";
+    werkRijenBij();
+  }
+
+  // ---- het kader met de selectie ----
+  function tekenKader() {
+    const t = actiefThema();
+    const ids = gekozen();
+    const lijst = L.geselecteerd(idx, ids);
+    const alleThemas = L.themas(D.data(), ll.schooljaar);
+    const kies = h("select", { "aria-label": "Thema" },
+      h("option", { value: "" }, "Losse selectie (niet bewaard)"),
+      alleThemas.map(x => h("option", { value: x.id, selected: x.id === du.thema || null }, x.naam + " (" + (x.doelen || []).length + ")")));
+    kies.addEventListener("change", () => { du.thema = kies.value || null; werkDoelenBij(); });
+    const naamVeld = h("input", { type: "text", placeholder: "Naam van het thema, bv. Herfst" });
+    const bewaar = () => {
+      const naam = naamVeld.value.trim();
+      if (!naam) { naamVeld.focus(); return; }
+      const nieuw = L.nieuwThema(naam, ll.schooljaar, [...du.selectie]);
+      D.wijzig(g => { g.themas = g.themas || []; g.themas.push(nieuw); });
+      du.thema = nieuw.id; du.selectie = new Set();
+      toast("Thema bewaard", naam);
+    };
+    naamVeld.addEventListener("keydown", (e) => { if (e.key === "Enter") bewaar(); });
+    const kopieer = async () => {
+      const { tekst, html } = L.kopieerTekst(idx, ids, { titel: t ? t.naam : "" });
+      try {
+        if (window.ClipboardItem) await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([tekst], { type: "text/plain" }), "text/html": new Blob([html], { type: "text/html" }) })]);
+        else await navigator.clipboard.writeText(tekst);
+        toast("Gekopieerd", lijst.length + (lijst.length === 1 ? " doel" : " doelen") + " – plak in je groepswerkplan");
+      } catch (e) {
+        const vak = h("textarea", { rows: 10, readonly: true }, tekst);
+        sluitbaarVenster([h("h2", {}, "Kopieer de doelen"), h("p", { class: "klein" }, "Kopiëren lukte niet automatisch. Selecteer de tekst en kopieer met Ctrl+C."), vak,
+          h("div", { class: "knoppen" }, h("button", { class: "knop", onclick: (ev) => ev.target.closest(".venster").remove() }, "Sluiten"))], { klein: true });
+        setTimeout(() => vak.select(), 0);
+      }
+    };
+    let groep = null;
+    const items = [];
+    for (const x of lijst) {
+      const kop = x.leerlijn.naam + " – " + x.domein.naam;
+      if (kop !== groep) { items.push(h("li", { class: "kadergroep" }, kop)); groep = kop; }
+      items.push(h("li", { class: "kaderdoel" + (x.soort === "tussendoel" ? " tussen" : "") },
+        h("span", { class: "doelnr klein-nr" }, x.nr), h("span", { class: "kadertekst" }, x.tekst.split("\n")[0]),
+        h("button", { class: "linkknop wis", "aria-label": "Doel " + x.nr + " weghalen", title: "Weghalen", onclick: () => zetGekozen(x.id, false) }, "×")));
+    }
+    kader.replaceChildren(...[
+      h("div", { class: "kaderkop" }, h("h3", {}, t ? "Thema" : "Selectie"), h("button", { class: "linkknop sluit-kader", onclick: () => kader.classList.remove("open"), "aria-label": "Kader sluiten" }, "×")),
+      kies,
+      t ? h("div", { class: "knoppen klein-knoppen" },
+        h("button", { class: "knop klein secundair", onclick: () => { const n = prompt("Nieuwe naam voor dit thema:", t.naam); if (n && n.trim()) D.wijzig(g => { const x = g.themas.find(y => y.id === t.id); x.naam = n.trim(); x.gewijzigd = Date.now(); }); } }, "Hernoemen"),
+        h("button", { class: "knop klein secundair", onclick: () => { du.selectie = new Set(t.doelen); du.thema = null; werkDoelenBij(); toast("Kopie als losse selectie", "Bewaar ze onder een nieuwe naam"); } }, "Dupliceren"),
+        h("button", { class: "knop klein secundair gevaar", onclick: () => { if (confirm("Thema “" + t.naam + "” verwijderen? De doelen tellen dan niet meer als behandeld.")) { D.wijzig(g => { const x = g.themas.find(y => y.id === t.id); Object.assign(x, { verwijderd: true, doelen: [], gewijzigd: Date.now() }); }); du.thema = null; } } }, "Verwijderen")) : null,
+      lijst.length ? h("ul", { class: "kaderlijst" }, items) : h("p", { class: "klein kaderleeg" }, t ? "Nog geen doelen in dit thema. Vink doelen aan in de lijst." : "Vink hoofd- of tussendoelen aan; ze verschijnen hier."),
+      lijst.length ? h("div", { class: "knoppen kolom" },
+        h("button", { class: "knop", onclick: kopieer }, "📋 Kopiëren (" + lijst.length + ")"),
+        !t ? h("button", { class: "knop secundair", onclick: () => { du.selectie = new Set(); werkDoelenBij(); } }, "Selectie wissen") : null) : null,
+      !t && lijst.length ? h("div", { class: "veld bewaar-thema" }, h("label", {}, "Bewaren als thema"), h("div", { class: "rij-invoer" }, naamVeld, h("button", { class: "knop secundair", onclick: bewaar }, "Bewaren"))) : null,
+      h("p", { class: "klein" }, "Een doel in een bewaard thema telt als behandeld voor schooljaar " + ll.schooljaar + ".")].filter(Boolean));
+    kaderKnop.textContent = (t ? t.naam + ": " : "Selectie: ") + lijst.length + (lijst.length === 1 ? " doel" : " doelen");
+  }
+
+  werkDoelenBij = () => { if (!boom.isConnected) return; tekenKader(); werkRijenBij(); };
+  levend.add({ el: boom, vul: () => werkDoelenBij() });
+
+  const dekKnop = h("button", { class: "knop secundair", onclick: () => openDekking(ll) }, "📊 Dekking");
+  doel.replaceChildren(
+    h("div", { class: "nu-kop" }, h("div", {}, h("h2", {}, "Doelen"), h("p", { class: "klein" }, ll.titel)), h("div", { class: "knoppen" }, dekKnop)),
+    h("div", { class: "doelen-balk" }, zoekveld, filters, teller),
+    h("div", { class: "doelen-raam" }, boom, kader),
+    kaderKnop);
+  tekenBoom();
+  tekenKader();
+  if (du.zoek) setTimeout(() => zoekveld.focus(), 0);
+}
+
+function openDekking(ll) {
+  const dek = L.dekking(D.data(), ll.schooljaar);
+  const per = L.dekkingPerDomein(ll, dek);
+  const th = L.themas(D.data(), ll.schooljaar);
+  const venster = sluitbaarVenster([
+    h("h2", {}, "Dekking " + ll.schooljaar),
+    h("p", { class: "klein" }, "Een hoofddoel telt als behandeld als het (of een van zijn tussendoelen) in een bewaard thema zit."),
+    h("table", { class: "dekkingtabel" }, h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Domein"), h("th", { scope: "col" }, "Hoofddoelen behandeld"), h("th", { scope: "col" }, ""))),
+      h("tbody", {}, per.map(p => h("tr", {}, h("th", { scope: "row" }, p.leerlijn.naam + " – " + p.domein.naam),
+        h("td", {}, p.behandeld + " / " + p.totaal),
+        h("td", {}, h("span", { class: "meter breed", role: "img", "aria-label": Math.round(100 * p.behandeld / (p.totaal || 1)) + "%" }, h("span", { style: "width:" + Math.round(100 * p.behandeld / (p.totaal || 1)) + "%" }))))))),
+    h("h3", {}, "Thema's"),
+    th.length ? h("ul", { class: "themalijst" }, th.map(t => h("li", {}, h("button", { class: "linkknop", onclick: () => { du.thema = t.id; venster.sluit(); staat.weergave = "doelen"; toon(); } }, t.naam), " – " + (t.doelen || []).length + " doelen"))) : h("p", { class: "klein" }, "Nog geen thema's bewaard."),
+    h("div", { class: "knoppen" },
+      h("button", { class: "knop secundair", onclick: () => { du.nogNiet = true; venster.sluit(); toon(); } }, "Toon wat nog niet behandeld is"),
+      h("button", { class: "knop", onclick: () => venster.sluit() }, "Sluiten"))
+  ]);
+}
+
 // ---------- Bewerken ----------
 const VAKKEN = ["T", "W", "WO", "GO", "SOVA", "PROJ", "Func. T", "Func. W", "Schrift", "Voorlezen", "CREA", "LO"];
 
@@ -1885,7 +2228,7 @@ function kopbalk() {
     h("div", { class: "merk" }, "☕ Coffee!"),
     staat.testtijd ? h("button", { class: "testtijd", title: "Klik om terug te keren naar de echte tijd", onclick: () => { staat.testtijd = null; toon(); } },
       "Testtijd " + datumTekst(nu(), { weekday: "short", day: "numeric", month: "short" }) + " " + W.tijdTekst(W.minutenVan(nu())) + " ✕") : null,
-    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"), todoTab(knop), knop("huiswerk", "Huiswerk"), knop("evaluatie", "Evaluatie"),
+    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"), todoTab(knop), knop("huiswerk", "Huiswerk"), knop("evaluatie", "Evaluatie"), knop("doelen", "Doelen"),
       h("button", { class: "tab thema-knop", title: THEMA_INFO[staat.inst.thema || "auto"][1] + " (klik om te wisselen)",
         "aria-label": THEMA_INFO[staat.inst.thema || "auto"][1], onclick: volgendThema }, THEMA_INFO[staat.inst.thema || "auto"][0]),
       knop("instellingen", "⚙︎"))
@@ -1905,6 +2248,7 @@ async function toon() {
     else if (staat.weergave === "todo") await toonTodo(inhoud);
     else if (staat.weergave === "evaluatie") toonEvaluatie(inhoud);
     else if (staat.weergave === "huiswerk") toonHuiswerk(inhoud);
+    else if (staat.weergave === "doelen") toonDoelen(inhoud);
     else await toonNu(inhoud);
   } catch (e) {
     if (mijnBeurt !== bezigMetTonen) return;

@@ -453,19 +453,27 @@ async function toonNu(doel) {
   const eerste = dag.rijen.find(r => r.start != null);
   const laatste = [...dag.rijen].reverse().find(r => r.eind != null);
 
+  // Indeling: op pc links de les, rechts de dag als tijdlijn + to-do's; op gsm alles onder elkaar
+  const links = h("div", { class: "nu-links" }), rechts = h("aside", { class: "nu-rechts", "aria-label": "Je dag" });
+  doel.appendChild(h("div", { class: "nu-raster" }, links, rechts));
+
   // herinneringen van vandaag
   const vandaagRood = dag.rijen.flatMap(r => r.rood.map(t => ({ t, rij: r })));
   if (vandaagRood.length) {
-    doel.appendChild(h("div", { class: "kaart herinneringen" },
+    links.appendChild(h("div", { class: "kaart herinneringen" },
       h("h4", {}, "❗ Niet vergeten vandaag"),
       h("ul", {}, vandaagRood.map(x => h("li", {}, h("span", { class: "tijd" }, W.tijdTekst(x.rij.start)), " ", x.t)))));
   }
 
-  doel.appendChild(todoVandaagKaart());
   const eersteLes = dag.rijen.find(r => r.soort === "les" && r.start != null);
-  if (eersteLes && nuMin < eersteLes.start) { const ak = afdrukKaart(dag, n); if (ak) doel.appendChild(ak); }
+  if (eersteLes && nuMin < eersteLes.start) { const ak = afdrukKaart(dag, n); if (ak) links.appendChild(ak); }
+  const tv = todoVandaagKaart();
+  tv.classList.add("nu-todo");
+  rechts.appendChild(tv);
+  rechts.appendChild(h("section", { class: "kaart nu-tijdlijn" }, h("h3", {}, "Vandaag"), dagTijdlijn(dag, n, nuMin),
+    h("p", { class: "klein" }, h("a", { href: week.bestand.webViewLink || "#", target: "_blank", rel: "noopener" }, "Weekagenda openen in Google Docs ↗"))));
   const hoofd = h("section", { class: "hoofd" });
-  doel.appendChild(hoofd);
+  links.appendChild(hoofd);
 
   if (huidig) {
     hoofd.appendChild(h("div", { class: "label-boven" }, "Nu bezig, nog " + (huidig.eind - nuMin) + " min"));
@@ -517,11 +525,34 @@ async function toonNu(doel) {
     if (nt) hoofd.appendChild(nt);
   }
 
-  if (laatste && nuMin >= laatste.eind) await toonVolgendeSchooldag(doel, n);
+  if (laatste && nuMin >= laatste.eind) await toonVolgendeSchooldag(links, n);
+}
 
-  doel.appendChild(h("h3", { class: "sectie" }, "Vandaag"));
-  doel.appendChild(dagLijst(dag, n, nuMin));
-  doel.appendChild(h("p", { class: "klein" }, h("a", { href: week.bestand.webViewLink || "#", target: "_blank", rel: "noopener" }, "Weekagenda openen in Google Docs ↗")));
+// De dag als smalle tijdlijn: voorbije uren gedimd, het lopende uur met voortgang, een streepje voor "nu"
+function dagTijdlijn(dag, datum, nuMin) {
+  const lijst = h("ol", { class: "tijdlijn" });
+  let streepGezet = false;
+  const streep = () => h("li", { class: "nu-streep", "aria-label": "Nu, " + W.tijdTekst(nuMin) }, h("span", {}, W.tijdTekst(nuMin)));
+  for (const rij of dag.rijen) {
+    if (rij.start == null) continue;
+    const bezig = nuMin >= rij.start && nuMin < rij.eind;
+    const voorbij = nuMin >= rij.eind;
+    if (!streepGezet && !bezig && nuMin < rij.start) { lijst.appendChild(streep()); streepGezet = true; }
+    const titel = rij.soort === "les" ? lesTitel(rij) : rij.soort === "vrij" ? "Vrij" : rij.titel;
+    const procent = bezig ? Math.round((nuMin - rij.start) / Math.max(1, rij.eind - rij.start) * 100) : 0;
+    lijst.appendChild(h("li", { class: "tijdlijn-item" + (bezig ? " bezig" : "") + (voorbij ? " voorbij" : "") },
+      h("button", { type: "button", class: "rij compact " + rijKlasse(rij) + (bezig ? " bezig" : "") + (voorbij ? " voorbij" : ""),
+        "aria-current": bezig ? "time" : null, onclick: () => openLesVenster(rij, datum) },
+        h("span", { class: "tijd" }, W.tijdTekst(rij.start)),
+        rijLabel(rij),
+        h("span", { class: "titel" + (rij.soort === "les" && !weergaveRij(rij).onderwerp ? " open" : "") }, titel),
+        rij.groen.length ? h("span", { class: "stip groen", title: rij.groen.join(", ") }, "●") : null,
+        rij.rood.length ? h("span", { class: "stip rood", title: rij.rood.join(", ") }, "●") : null),
+      bezig ? h("span", { class: "tijdlijn-voortgang", "aria-hidden": "true" }, h("span", { style: "width:" + procent + "%" })) : null));
+    if (bezig) streepGezet = true;
+  }
+  if (!streepGezet && dag.rijen.length) lijst.appendChild(streep());
+  return lijst;
 }
 
 async function toonVorigeLes(vak, week, huidige) {
@@ -708,13 +739,15 @@ function toonInstellingen(doel) {
       staat.gebruiker ? h("p", { class: "klein" }, "Aangemeld als " + staat.gebruiker.displayName + " (" + staat.gebruiker.emailAddress + "). ",
         h("a", { href: "#", onclick: (e) => { e.preventDefault(); afmelden(); } }, "Afmelden")) : null
     ),
+    installeerKaart(),
     h("section", { class: "kaart" },
       h("h3", {}, "Privacy"),
       h("ul", { class: "privacy" },
         h("li", {}, "Coffee! praat enkel met Google: je agenda in Google Docs en het bestand \u201cCoffee! gegevens.json\u201d in de map Coffee! van je eigen Drive. Er is geen andere server en geen AI."),
         h("li", {}, "De code staat op GitHub, maar bevat geen enkele naam of score. Lettertypes en hulpprogramma's zitten in Coffee! zelf."),
         h("li", {}, "De browser mag van Coffee! nergens anders gegevens naartoe sturen dan naar Google (veiligheidsregel in de pagina)."),
-        h("li", {}, "Op dit toestel bewaart Coffee! een kopie om snel te starten. Afmelden wist die kopie; je Drive blijft ongemoeid. Gebruik je een gedeelde computer, meld dan altijd af.")),
+        h("li", {}, "Op dit toestel bewaart Coffee! een kopie om snel te starten. Afmelden wist die kopie; je Drive blijft ongemoeid. Gebruik je een gedeelde computer, meld dan altijd af."),
+        h("li", {}, "Als app bewaart Coffee! enkel zijn eigen code (pagina's, lettertypes, iconen) op het toestel, nooit je agenda of gegevens van Google.")),
       staat.gebruiker ? h("button", { class: "knop secundair", onclick: afmelden }, "Afmelden en dit toestel wissen") : null
     ),
     h("section", { class: "kaart" },
@@ -825,8 +858,8 @@ function levendVak(maak) {
 }
 D.opWijziging(() => {
   for (const v of [...levend]) { if (v.el.isConnected) v.vul(); else levend.delete(v); }
-  const teller = document.querySelector(".tab-teller");
-  if (teller) { const n = T.aantalOpen(todos(), nu()); teller.textContent = n || ""; teller.classList.toggle("verborgen", !n); }
+  const n = T.aantalOpen(todos(), nu());
+  document.querySelectorAll(".tab-teller").forEach(teller => { teller.textContent = n || ""; teller.classList.toggle("verborgen", !n); });
 });
 
 function todoTab(knop) {
@@ -2376,12 +2409,45 @@ function kopbalk() {
   );
 }
 
+// Gsm: menu onderaan met Nu, Week, To-do en Meer (de rest)
+const MEER = [["huiswerk", "📋", "Huiswerk"], ["evaluatie", "📊", "Evaluatie"], ["doelen", "🎯", "Doelen"], ["instellingen", "⚙︎", "Instellingen"]];
+function onderbalk() {
+  const ga = (id) => { sluitMeer(); staat.weergave = id; toon(); window.scrollTo(0, 0); };
+  const knop = (id, icoon, tekst, extra) => h("button", { class: "onder-tab" + (staat.weergave === id ? " actief" : ""), "aria-current": staat.weergave === id ? "page" : null, onclick: () => ga(id) },
+    h("span", { class: "onder-icoon", "aria-hidden": "true" }, icoon), h("span", { class: "onder-tekst" }, tekst), extra || null);
+  const n = T.aantalOpen(todos(), nu());
+  const inMeer = MEER.some(m => m[0] === staat.weergave);
+  const meerKnop = h("button", { class: "onder-tab" + (inMeer ? " actief" : ""), "aria-haspopup": "true", "aria-expanded": "false", onclick: () => openMeer(meerKnop, ga) },
+    h("span", { class: "onder-icoon", "aria-hidden": "true" }, "☰"), h("span", { class: "onder-tekst" }, inMeer ? MEER.find(m => m[0] === staat.weergave)[2] : "Meer"));
+  return h("nav", { class: "onderbalk", "aria-label": "Hoofdmenu" },
+    knop("nu", "☕", "Nu"), knop("week", "🗓️", "Week"),
+    knop("todo", "✅", "To-do", h("span", { class: "tab-teller" + (n ? "" : " verborgen") }, n ? String(n) : "")),
+    meerKnop);
+}
+function sluitMeer() { const m = document.querySelector(".meer-paneel"); if (m) m.remove(); document.querySelectorAll(".onderbalk [aria-expanded]").forEach(b => b.setAttribute("aria-expanded", "false")); }
+function openMeer(knop, ga) {
+  if (document.querySelector(".meer-paneel")) return sluitMeer();
+  knop.setAttribute("aria-expanded", "true");
+  const thema = THEMA_INFO[staat.inst.thema || "auto"];
+  const paneel = h("div", { class: "meer-paneel", role: "dialog", "aria-label": "Meer" },
+    h("div", { class: "meer-achter", onclick: sluitMeer }),
+    h("div", { class: "meer-blad" },
+      MEER.map(([id, icoon, tekst]) => h("button", { class: "meer-knop" + (staat.weergave === id ? " actief" : ""), onclick: () => ga(id) },
+        h("span", { class: "onder-icoon", "aria-hidden": "true" }, icoon), tekst)),
+      h("button", { class: "meer-knop", onclick: () => { sluitMeer(); volgendThema(); } }, h("span", { class: "onder-icoon", "aria-hidden": "true" }, thema[0]), thema[1])));
+  document.body.appendChild(paneel);
+  paneel.querySelector(".meer-knop").focus();
+  const opEsc = (e) => { if (e.key === "Escape") { sluitMeer(); knop.focus(); document.removeEventListener("keydown", opEsc); } };
+  document.addEventListener("keydown", opEsc);
+}
+
 let bezigMetTonen = 0;
 async function toon() {
   const mijnBeurt = ++bezigMetTonen;
   const app = $("app");
   const inhoud = h("main", { class: "weergave-" + staat.weergave });
-  app.replaceChildren(kopbalk(), inhoud);
+  sluitMeer();
+  app.replaceChildren(kopbalk(), inhoud, onderbalk());
   try {
     if (staat.weergave === "instellingen") return toonInstellingen(inhoud);
     if (!staat.inst.map) { staat.weergave = "instellingen"; return toon(); }
@@ -2431,7 +2497,8 @@ function startScherm(boodschap) {
 async function start(viaKlik) {
   if (!staat.inst.clientId) { staat.weergave = "instellingen"; return toon(); }
   try {
-    await G.initAanmelden(staat.inst.clientId);
+    try { await G.initAanmelden(staat.inst.clientId); }
+    catch (e) { if (!viaKlik && G.wasAangemeld() && sluimerStart()) { await D.laad(); await toon(); toonVerbindBalk(); return; } throw e; }
     if (!G.isAangemeld()) {
       if (!viaKlik) {
         // verlopen sleutel: meteen verder met de bewaarde gegevens, verbinden gebeurt bij je eerste klik
@@ -2486,6 +2553,43 @@ function toonVerbindBalk() {
   } }, staat.slaapt ? "☕ Je ziet de bewaarde agenda. Klik ergens om te verbinden met Google." : "☕ Klik om verder te werken (je Google-verbinding is verlopen)"));
 }
 setInterval(toonVerbindBalk, 60000);
+
+// ---------- Als app op je toestel ----------
+// De service worker bewaart enkel de code van Coffee! (geen gegevens). Een nieuwe versie meldt zich met een knop.
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installPrompt = e; if (staat.weergave === "instellingen") toon(); });
+window.addEventListener("appinstalled", () => { installPrompt = null; toast("Coffee! staat op je toestel", "Open het voortaan via het icoon"); });
+const isGeinstalleerd = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  window.addEventListener("load", async () => {
+    try {
+      const reg = await navigator.serviceWorker.register("sw.js");
+      const meldNieuw = (sw) => {
+        if (!sw || !navigator.serviceWorker.controller || document.querySelector(".updatebalk")) return;
+        document.body.appendChild(h("button", { class: "updatebalk", onclick: () => sw.postMessage("nu-bijwerken") }, "☕ Klik om de nieuwe versie van Coffee! te laden"));
+      };
+      if (reg.waiting) meldNieuw(reg.waiting);
+      reg.addEventListener("updatefound", () => {
+        const nieuw = reg.installing;
+        nieuw && nieuw.addEventListener("statechange", () => { if (nieuw.state === "installed") meldNieuw(nieuw); });
+      });
+      let herladen = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => { if (!herladen && navigator.serviceWorker.controller) { herladen = true; location.reload(); } });
+      setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
+    } catch (e) { console.warn("Service worker niet geregistreerd", e); }
+  });
+}
+function installeerKaart() {
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  return h("section", { class: "kaart" },
+    h("h3", {}, "Coffee! als app"),
+    isGeinstalleerd() ? h("p", { class: "klein" }, "✓ Je gebruikt Coffee! als app op dit toestel.")
+      : installPrompt ? [h("p", { class: "klein" }, "Zet Coffee! op je beginscherm of in je taakbalk: eigen icoon, geen adresbalk en sneller starten. Je gegevens blijven op je Drive."),
+          h("button", { class: "knop", onclick: async () => { installPrompt.prompt(); try { await installPrompt.userChoice; } catch (e) { /* niets */ } installPrompt = null; toon(); } }, "📲 Installeren")]
+      : ios ? h("p", { class: "klein" }, "Op iPhone of iPad: open Coffee! in Safari, tik op de deelknop (□↑) en kies “Zet op beginscherm”.")
+      : h("p", { class: "klein" }, "In Chrome of Edge: klik op het installeer-icoon in de adresbalk, of kies in het menu (⋮) “Coffee! installeren” / “App installeren”. Op Android: menu (⋮) → “Toevoegen aan startscherm”."));
+}
 
 pasThemaToe();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", pasThemaToe);

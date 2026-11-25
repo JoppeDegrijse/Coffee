@@ -19,9 +19,12 @@ export class AanmeldFout extends Error {}
 export class ConflictFout extends Error {}
 
 // ---------- Aanmelden ----------
+// Wacht op het aanmeldscript van Google (max. 10 s: zonder internet start Coffee! met de bewaarde gegevens)
 function wachtOpGoogle() {
-  return new Promise((resolve) => {
-    const kijk = () => (window.google && google.accounts && google.accounts.oauth2) ? resolve() : setTimeout(kijk, 100);
+  return new Promise((resolve, reject) => {
+    const tot = Date.now() + 10000;
+    const kijk = () => (window.google && google.accounts && google.accounts.oauth2) ? resolve()
+      : Date.now() > tot ? reject(new AanmeldFout("Geen verbinding met Google. Controleer je internet.")) : setTimeout(kijk, 100);
     kijk();
   });
 }
@@ -69,6 +72,7 @@ export function onthoudAccount(email) { if (email) bewaar(HINT_SLEUTEL, email); 
 let bezigMetAanmelden = null;
 export function meldAan() {
   if (bezigMetAanmelden) return bezigMetAanmelden;
+  if (!tokenClient) return Promise.reject(new AanmeldFout("Geen verbinding met Google. Herlaad Coffee! als je internet terug is."));
   bezigMetAanmelden = new Promise((resolve, reject) => {
     wachtend = { resolve, reject };
     const hint = localStorage.getItem(HINT_SLEUTEL);

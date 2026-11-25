@@ -1,7 +1,7 @@
 // Coffee! – to-do's: model, samenvoegen tussen toestellen, vrije blokken om in te plannen.
 //
 // todo = { id, tekst, klaar, deadline: "YYYY-MM-DD" | null,
-//          gepland: null | { datum: "YYYY-MM-DD", start, eind, soort: "perm"|"vrij"|"avond"|"woensdag"|"weekend", titel },
+//          gepland: null | { datum: "YYYY-MM-DD", start, eind, soort: "landing"|"perm"|"vrij"|"avond"|"woensdag"|"weekend", titel },
 //          aangemaakt, gewijzigd, verwijderd? }
 // gegevens = { versie: 1, todos: [todo] }
 
@@ -46,6 +46,13 @@ export function opruimen(gegevens, nu = Date.now()) {
 export const slotSleutel = (s) => s.datum + "|" + s.start + "|" + s.soort;
 const parseTijd = (t) => { const [u, m] = (t || "0:0").split(":").map(Number); return u * 60 + m; };
 
+// Zachte landing: 's ochtends vóór 8.40 u. Staat er een rij "zachte landing" in de agenda, dan gelden die uren.
+export const LANDING = { start: 8 * 60, eind: 8 * 60 + 40 };
+export function landingVan(dag, datum) {
+  const rij = (dag && dag.rijen || []).find(r => r.start != null && /zachte\s*landing/i.test((r.titel || "") + " " + (r.vak || "") + " " + (r.onderwerp || "")));
+  return { datum: W.isoDatum(datum), start: rij ? rij.start : LANDING.start, eind: rij ? rij.eind : LANDING.eind, soort: "landing", titel: "Zachte landing" };
+}
+
 // Vrije blokken in de komende dagen.
 // dagenPerDatum: Map("YYYY-MM-DD" → dag uit de parser), avond = { start: "19:30", eind: "21:00" } of null
 export function vrijeBlokken(dagenPerDatum, vanaf, aantalDagen, { zwemweek = null, avond = null } = {}) {
@@ -67,6 +74,11 @@ export function vrijeBlokken(dagenPerDatum, vanaf, aantalDagen, { zwemweek = nul
       }
     }
     const weekdag = (datum.getDay() + 6) % 7;
+    // zachte landing op schooldagen (enkel als er die dag les is, dus niet in vakanties)
+    if (dag && weekdag < 5 && dag.rijen.some(r => r.start != null)) {
+      const l = landingVan(dag, datum);
+      if (!(vandaag && l.eind <= nuMin)) uit.push(l);
+    }
     // woensdagnamiddag: één groot blok van 13 tot 22 u.
     if (weekdag === 2) {
       if (!(vandaag && 22 * 60 <= nuMin)) uit.push({ datum: iso, start: 13 * 60, eind: 22 * 60, soort: "woensdag", titel: "Woensdagnamiddag" });

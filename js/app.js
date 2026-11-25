@@ -466,6 +466,13 @@ async function toonNu(doel) {
   }
 
   const eersteLes = dag.rijen.find(r => r.soort === "les" && r.start != null);
+  const landing = weekdagVan(n) < 5 ? T.landingVan(dag, n) : null;
+  if (landing && nuMin < landing.eind) {
+    const bezig = nuMin >= landing.start;
+    links.appendChild(h("div", { class: "kaart landing" },
+      h("h4", {}, "🌅 Zachte landing " + (bezig ? "· nog " + (landing.eind - nuMin) + " min" : W.tijdTekst(landing.start) + "–" + W.tijdTekst(landing.eind))),
+      todoBlok(landing)));
+  }
   if (eersteLes && nuMin < eersteLes.start) { const ak = afdrukKaart(dag, n); if (ak) links.appendChild(ak); }
   const tv = todoVandaagKaart();
   tv.classList.add("nu-todo");
@@ -875,6 +882,7 @@ function slotTekst(slot, kort = false) {
   const dag = slot.datum === vandaag ? "Vandaag" : slot.datum === morgen ? "Morgen" : datumTekst(d, { weekday: kort ? "short" : "long", day: "numeric", month: "short" });
   if (slot.soort === "weekend") return slot.datum === vandaag || slot.datum === morgen ? dag + " (" + slot.titel.toLowerCase() + ")" : dag;
   if (slot.soort === "woensdag") return dag + " namiddag";
+  if (slot.soort === "landing") return dag + " " + W.tijdTekst(slot.start) + ", zachte landing";
   const wat = slot.soort === "avond" ? "avond" : slot.titel;
   return dag + " " + W.tijdTekst(slot.start) + ", " + wat;
 }
@@ -1019,7 +1027,7 @@ function todoBlok(slot) {
 }
 
 // Kaart op het dashboard: alle to-do's die vandaag gepland staan (permanenties, LO, namiddag, avond, weekend)
-const SOORT_LABEL = { perm: "P", vrij: "LO", avond: "🌙", woensdag: "🌤️", weekend: "🛋️" };
+const SOORT_LABEL = { landing: "🌅", perm: "P", vrij: "LO", avond: "🌙", woensdag: "🌤️", weekend: "🛋️" };
 function todoVandaagKaart() {
   return levendVak(() => {
     const iso = W.isoDatum(nu());
@@ -1149,7 +1157,7 @@ async function openInplanner(todo) {
       const gekozen = todo.gepland && T.slotSleutel(todo.gepland) === T.slotSleutel(s);
       return h("button", { class: "slot " + s.soort + (gekozen ? " gekozen" : ""), onclick: () => { wijzigTodo(todo.id, x => { x.gepland = { ...s }; }); venster.sluit(); } },
         s.soort === "weekend" ? null : h("span", { class: "tijd" }, W.tijdTekst(s.start) + "–" + W.tijdTekst(s.eind)),
-        h("span", {}, s.soort === "avond" ? "🌙 Avond" : s.soort === "vrij" ? "LO (vrij)" : s.soort === "weekend" ? "🛋️ " + s.titel : s.soort === "woensdag" ? "🌤️ Namiddag" : s.titel),
+        h("span", {}, s.soort === "landing" ? "🌅 Zachte landing" : s.soort === "avond" ? "🌙 Avond" : s.soort === "vrij" ? "LO (vrij)" : s.soort === "weekend" ? "🛋️ " + s.titel : s.soort === "woensdag" ? "🌤️ Namiddag" : s.titel),
         al ? h("span", { class: "slot-aantal", title: "Al gepland in dit blok" }, String(al)) : null);
     })))));
 }

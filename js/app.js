@@ -129,11 +129,56 @@ async function laadWeken() {
     || bestanden.find(b => /sjabloon/i.test(b.name) && b.mimeType === G.DOC_TYPE) || null;
 }
 
+// ---------- Sluimerstand ----------
+// Is je Google-sleutel verlopen, dan opent Coffee! meteen met de laatst geladen gegevens van deze en volgende week
+// (enkel op dit toestel, gewist bij afmelden). Je eerste klik vernieuwt de verbinding op de achtergrond.
+const SLUIMER = "coffee_sluimer";
+function sluimerLezen() { try { return JSON.parse(localStorage.getItem(SLUIMER) || "null"); } catch (e) { return null; } }
+function sluimerBewaren(week, dagen) {
+  const huidig = W.weekVoorDatum(staat.weken, nu());
+  const i = staat.weken.indexOf(huidig);
+  const relevant = new Set([staat.weken[i], staat.weken[i + 1]].filter(Boolean).map(w => w.bestand.id));
+  if (!relevant.has(week.bestand.id)) return;
+  const oud = sluimerLezen() || {};
+  const bewaard = {};
+  for (const [id, d] of Object.entries(oud.dagen || {})) if (relevant.has(id)) bewaard[id] = d;
+  bewaard[week.bestand.id] = JSON.parse(JSON.stringify(dagen, (k, v) => (k === "week" || k === "idemVan") ? undefined : v));
+  const uit = { gebruiker: staat.gebruiker, weken: staat.weken.map(w => ({ bestand: w.bestand, maandag: W.isoDatum(w.maandag) })), sjabloon: staat.sjabloon, dagen: bewaard };
+  try { localStorage.setItem(SLUIMER, JSON.stringify(uit)); } catch (e) { /* vol: dan zonder sluimerstand */ }
+}
+function sluimerStart() {
+  const sl = sluimerLezen();
+  if (!sl || !sl.gebruiker || !sl.weken) return false;
+  staat.gebruiker = sl.gebruiker;
+  staat.weken = sl.weken.map(w => ({ bestand: w.bestand, maandag: W.vanIso(w.maandag) }));
+  staat.sjabloon = sl.sjabloon || null;
+  for (const w of staat.weken) {
+    const dagen = sl.dagen && sl.dagen[w.bestand.id];
+    if (dagen) staat.cache.set(w.bestand.id, Promise.resolve(annoteer(w, dagen)));
+  }
+  staat.slaapt = true;
+  return true;
+}
+// Na het vernieuwen van de sleutel: alles opnieuw ophalen
+async function wakker() {
+  if (!staat.slaapt) return;
+  staat.slaapt = false;
+  staat.cache.clear();
+  try { await D.laad(); if (staat.inst.map) await laadWeken(); } catch (e) { console.warn(e); }
+  toon();
+}
+function annoteer(week, dagen) {
+  dagen.forEach((d, i) => d.rijen.forEach((r, j) => { r.plaats = { dagIndex: i, rijIndex: j }; r.week = week; r.dagTitel = d.titel;
+    r.datum = d.weekdag >= 0 ? W.plusDagen(week.maandag, d.weekdag) : null; }));
+  return dagen;
+}
+
 function dagenVan(week) {
   if (!week) return Promise.resolve([]);
   if (!staat.cache.has(week.bestand.id)) {
     const p = G.leesWeekBestand(week.bestand)
       .then(dagen => {
+        try { sluimerBewaren(week, dagen); } catch (e) { /* niet erg */ }
         dagen.forEach((d, i) => d.rijen.forEach((r, j) => { r.plaats = { dagIndex: i, rijIndex: j }; r.week = week; r.dagTitel = d.titel;
           r.datum = d.weekdag >= 0 ? W.plusDagen(week.maandag, d.weekdag) : null; }));
         return dagen;
@@ -538,6 +583,7 @@ async function toonWeek(doel) {
     ? h("div", { class: "naar-vandaag" }, h("button", { class: "knop klein secundair", onclick: () => { staat.weekIndex = staat.weken.indexOf(huidigeWeek); toon(); } }, "↩ Naar deze week")) : null;
   const weekdeel = h("div", { class: "weekdeel" }, navigatie, naarNu, nieuweWeekKnop(), h("p", { class: "laden" }, "Week wordt geladen…"));
   doel.replaceChildren(zoekbalk.element, zoekbalk.resultaten, weekdeel);
+  doel.classList.add("met-zoekknop");
   zoekbalk.opZoeken = (actief) => { weekdeel.hidden = actief; };
   zoekbalk.start();
   const dagen = await dagenVan(week);
@@ -584,7 +630,20 @@ function lessenZoekbalk() {
   const status = h("p", { class: "klein lessen-status", role: "status" });
   const lijst = h("div", { class: "lessen-resultaten" });
   const resultaten = h("section", { class: "lessen-zoekvak", hidden: true }, status, lijst);
-  const zb = { element: h("div", { class: "lessen-zoekbalk" }, veld), resultaten, opZoeken: () => {}, start: () => { if (lz.zoek) zoek(); } };
+  // standaard enkel een vergrootglas; een klik opent het zoekveld
+  const knop = h("button", { class: "zoekknop", "aria-label": "Zoeken in alle lesvoorbereidingen", title: "Zoeken in alle lessen", "aria-expanded": "false" }, "🔍");
+  const sluit = h("button", { class: "linkknop zoek-sluit", "aria-label": "Zoeken sluiten", title: "Sluiten" }, "×");
+  const balk = h("div", { class: "lessen-zoekbalk" }, knop, h("div", { class: "zoekveld-wrap", hidden: true }, veld, sluit));
+  const open = (aan) => {
+    balk.classList.toggle("open", aan);
+    knop.hidden = aan; knop.setAttribute("aria-expanded", aan ? "true" : "false");
+    balk.querySelector(".zoekveld-wrap").hidden = !aan;
+    if (aan) setTimeout(() => veld.focus(), 0);
+    else { veld.value = ""; zoek(); knop.focus(); }
+  };
+  knop.addEventListener("click", () => open(true));
+  sluit.addEventListener("click", () => open(false));
+  const zb = { element: balk, resultaten, opZoeken: () => {}, start: () => { if (lz.zoek) { open(true); zoek(); } } };
   let timer, teller = 0;
   const zoek = async () => {
     lz.zoek = veld.value;
@@ -605,8 +664,7 @@ function lessenZoekbalk() {
       treffers.length > lz.toon ? h("button", { class: "knop secundair", onclick: () => { lz.toon += 30; zoek(); } }, "Meer tonen (" + (treffers.length - lz.toon) + ")") : "");
   };
   veld.addEventListener("input", () => { clearTimeout(timer); lz.toon = 30; timer = setTimeout(zoek, 200); });
-  veld.addEventListener("keydown", (e) => { if (e.key === "Escape" && veld.value) { e.preventDefault(); veld.value = ""; zoek(); } });
-  if (lz.zoek) setTimeout(() => veld.focus(), 0);
+  veld.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); open(false); } });
   return zb;
 }
 
@@ -739,7 +797,7 @@ async function afmelden() {
   if (D.heeftOnbewaard()) { toast("Even geduld", "Coffee! bewaart nog je laatste wijziging"); return; }
   G.meldAf();
   D.wisLokaal();
-  try { localStorage.removeItem(LEERLIJN_LOKAAL); } catch (e) { /* niets */ }
+  try { localStorage.removeItem(LEERLIJN_LOKAAL); localStorage.removeItem(SLUIMER); } catch (e) { /* niets */ }
   staat.leerlijn = null; staat.leerlijnGecontroleerd = false;
   try { sessionStorage.clear(); } catch (e) { /* niets */ }
   location.reload();
@@ -2368,7 +2426,11 @@ async function start(viaKlik) {
   try {
     await G.initAanmelden(staat.inst.clientId);
     if (!G.isAangemeld()) {
-      if (!viaKlik) return startScherm();
+      if (!viaKlik) {
+        // verlopen sleutel: meteen verder met de bewaarde gegevens, verbinden gebeurt bij je eerste klik
+        if (G.wasAangemeld() && sluimerStart()) { await D.laad(); await toon(); toonVerbindBalk(); return; }
+        return startScherm();
+      }
       await G.meldAan();
     }
     $("app").replaceChildren(h("div", { class: "startscherm" }, h("div", { class: "beker draait" }, "☕"), h("p", {}, "Agenda zetten…")));
@@ -2388,7 +2450,7 @@ async function start(viaKlik) {
 
 // Elke halve minuut het dashboard verversen (enkel bij echte tijd)
 setInterval(() => {
-  if (staat.weergave === "nu" && !staat.testtijd && G.isAangemeld() && !document.querySelector("details[open]") && !document.querySelector(".venster") &&
+  if (staat.weergave === "nu" && !staat.testtijd && (G.isAangemeld() || staat.slaapt) && !document.querySelector("details[open]") && !document.querySelector(".venster") &&
       !(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) toon();
 }, 30000);
 
@@ -2398,21 +2460,23 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 // Google geeft een sleutel die ± 1 uur geldig is. Nadert het einde, dan vernieuwt Coffee! hem bij je volgende klik
 // (een venstertje van Google flitst dan even open en dicht). Is hij toch verlopen, dan volstaat één klik op de balk.
 let laatsteVernieuwing = 0;
-document.addEventListener("click", () => {
+const vernieuwBijKlik = () => {
   if (!G.wasAangemeld() || !staat.gebruiker) return;
   const min = G.minutenGeldig();
-  if (min > 15 || Date.now() - laatsteVernieuwing < 60000) return;
+  if (min > 20 || Date.now() - laatsteVernieuwing < 30000) return;
   laatsteVernieuwing = Date.now();
-  G.meldAan().then(() => { verbergVerbindBalk(); if (min <= 0) toon(); }).catch(() => toonVerbindBalk());
-}, true);
+  G.meldAan().then(() => { verbergVerbindBalk(); if (staat.slaapt) wakker(); else if (min <= 0) toon(); }).catch(() => toonVerbindBalk());
+};
+document.addEventListener("click", vernieuwBijKlik, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") vernieuwBijKlik(); }, true);
 
 function verbergVerbindBalk() { const b = document.querySelector(".verbindbalk"); if (b) b.remove(); }
 function toonVerbindBalk() {
   if (!staat.gebruiker || G.isAangemeld() || document.querySelector(".verbindbalk")) return;
   document.body.appendChild(h("button", { class: "verbindbalk", onclick: async (e) => {
     e.stopPropagation();
-    try { await G.meldAan(); verbergVerbindBalk(); toon(); } catch (x) { /* blijft staan */ }
-  } }, "☕ Klik om verder te werken (je Google-verbinding is verlopen)"));
+    try { await G.meldAan(); verbergVerbindBalk(); if (staat.slaapt) wakker(); else toon(); } catch (x) { /* blijft staan */ }
+  } }, staat.slaapt ? "☕ Je ziet de bewaarde agenda. Klik ergens om te verbinden met Google." : "☕ Klik om verder te werken (je Google-verbinding is verlopen)"));
 }
 setInterval(toonVerbindBalk, 60000);
 

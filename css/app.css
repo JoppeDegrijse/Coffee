@@ -739,8 +739,17 @@ mark { background: color-mix(in srgb, var(--karamel) 38%, transparent); color: i
 .vandaag-label { display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px; background: var(--karamel); color: #241a15; font-size: .78rem; font-weight: 800; vertical-align: middle; }
 main.weergave-week .weekraster { gap: 22px 18px; }
 .naar-vandaag { display: flex; justify-content: center; margin: -6px 0 10px; }
-.lessen-zoekbalk { margin: 0 0 14px; }
-.lessen-zoek { width: 100%; font-size: 1.02rem; padding: 11px 14px; margin: 0; border-radius: var(--r-groot); }
+.lessen-zoekbalk { margin: 0 0 6px; display: flex; align-items: center; min-height: 44px; }
+.zoekknop { font-size: 1.15rem; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--lijn); background: var(--oppervlak); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.zoekknop:hover { border-color: var(--karamel); }
+.zoekveld-wrap { position: relative; flex: 1; }
+.zoekveld-wrap .zoek-sluit { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 1.4rem; line-height: 1; color: var(--tekst-zacht); }
+.lessen-zoekbalk.open { margin-bottom: 12px; }
+main.met-zoekknop .lessen-zoekbalk:not(.open) { position: absolute; }
+main.met-zoekknop { position: relative; }
+main.met-zoekknop .lessen-zoekbalk:not(.open) + .lessen-zoekvak + .weekdeel .weeknav { padding-left: 56px; }
+.lessen-zoek { width: 100%; font-size: 1.02rem; padding: 11px 40px 11px 14px; margin: 0; border-radius: var(--r-groot); }
+.lessen-zoek::-webkit-search-cancel-button { display: none; }
 .lessen-zoekvak { margin-bottom: 18px; }
 .lessen-resultaten { display: grid; gap: 8px; }
 .lesresultaat { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 14px; text-align: left; font: inherit; color: inherit; background: var(--oppervlak); border: 1px solid var(--lijn); border-radius: var(--r); padding: 10px 14px; cursor: pointer; }

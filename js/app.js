@@ -6,6 +6,7 @@ import * as T from "./todo.js";
 import * as D from "./gegevens.js";
 import * as E from "./evaluatie.js";
 import * as N from "./notities.js";
+import * as H from "./huiswerk.js";
 
 // ---------- Instellingen (in deze browser) ----------
 const INST_SLEUTEL = "coffee_instellingen";
@@ -631,6 +632,15 @@ function toonInstellingen(doel) {
             inst.grenzen = { sterk: a, goed: b, aandacht: c }; bewaarInstellingen(); zeg("ok", "Grenzen opgeslagen.");
           } }, "Opslaan"),
           h("button", { class: "knop secundair", onclick: () => { delete inst.grenzen; bewaarInstellingen(); s1.value = 80; s2.value = 65; s3.value = 50; zeg("ok", "Standaardgrenzen (80, 65, 50) hersteld."); } }, "Standaard"));
+      })()
+    ),
+    h("section", { class: "kaart" },
+      h("h3", {}, "Huiswerk"),
+      h("p", { class: "klein" }, "Elke maandag een kolom voor de huistaak taal, elke donderdag een voor rekenen, in weken met een weekagenda. Vanaf welke datum?"),
+      (() => {
+        const veld = h("input", { type: "date", value: huiswerkVanaf() });
+        return h("div", { class: "rij-tijden" }, h("label", {}, "Bijhouden vanaf", veld),
+          h("button", { class: "knop", onclick: () => { if (!veld.value) return; inst.huiswerkVanaf = veld.value; bewaarInstellingen(); zeg("ok", "Opgeslagen."); } }, "Opslaan"));
       })()
     ),
     h("section", { class: "kaart" },
@@ -1342,6 +1352,148 @@ function toonLeerling(doel, l) {
     ...blokken);
 }
 
+// ---------- Huiswerk ----------
+const hw = { vak: "taal", alles: false, weggevallen: false, scroll: null, focus: null };
+const ZICHTBAAR = 10;
+
+function huiswerkVanaf() {
+  if (!staat.inst.huiswerkVanaf) { staat.inst.huiswerkVanaf = W.isoDatum(W.maandagVan(nu())); bewaarInstellingen(); }
+  return staat.inst.huiswerkVanaf;
+}
+function huiswerkKolommen(vak, opties = {}) {
+  return H.kolommen(D.data(), vak, {
+    maandagen: staat.weken.map(w => W.isoDatum(w.maandag)),
+    vanaf: huiswerkVanaf(), tot: W.isoDatum(nu()), metWeggevallen: hw.weggevallen, ...opties
+  });
+}
+
+function hwBol(t) {
+  return h("span", { class: "hw-bol hw-" + t, "aria-hidden": "true" }, H.TOESTANDEN[t].teken);
+}
+
+function toonHuiswerk(doel) {
+  const g = D.data();
+  const heeftLeerlingen = E.leerlingen(g).length > 0;
+  const tabs = h("div", { class: "filter", role: "group", "aria-label": "Vak" },
+    Object.entries(H.HW_VAKKEN).map(([k, v]) => h("button", { class: "filterknop" + (hw.vak === k ? " actief" : ""), "aria-pressed": hw.vak === k ? "true" : "false",
+      onclick: () => { hw.vak = k; hw.scroll = null; toon(); } }, v.naam + " (" + E.GROEPEN[v.groep].toLowerCase() + ")")));
+  doel.replaceChildren(...[
+    h("div", { class: "nu-kop" }, h("h2", {}, "Huiswerk"),
+      h("div", { class: "knoppen" }, heeftLeerlingen ? h("button", { class: "knop secundair", onclick: () => openExtraHuistaak() }, "＋ Extra huistaak") : null)),
+    !heeftLeerlingen ? h("div", { class: "kaart leeg-staat" }, h("h3", {}, "Eerst je leerlingen"),
+      h("p", {}, "Het huiswerkrooster gebruikt de leerlingen en groepen uit Evaluatie. Voeg ze daar toe en duid de taalgroep en rekengroep aan."),
+      h("button", { class: "knop", onclick: () => { staat.weergave = "evaluatie"; gaNaar("leerlingen"); } }, "Leerlingen toevoegen")) : null,
+    heeftLeerlingen ? tabs : null,
+    heeftLeerlingen ? h("div", { class: "legende hw-legende", "aria-label": "Legende" },
+      ["open", "in", "laat"].map(t => h("span", {}, hwBol(t), H.TOESTANDEN[t].naam)),
+      h("span", { class: "klein" }, "Klik om te wisselen.")) : null,
+    heeftLeerlingen ? levendVak(() => huiswerkRooster()) : null].filter(Boolean));
+}
+
+function huiswerkRooster() {
+  const g = D.data();
+  const alle = huiswerkKolommen(hw.vak);
+  const kols = hw.alles ? alle : alle.slice(-ZICHTBAAR);
+  const ll = H.leerlingenVan(g, hw.vak, kols);
+  const info = H.HW_VAKKEN[hw.vak];
+  if (!ll.length) return h("p", { class: "klein" }, "Nog niemand in de " + E.GROEPEN[info.groep].toLowerCase() + ". Duid dit aan bij Evaluatie → Leerlingen.");
+  if (!kols.length) return h("div", { class: "kaart leeg-staat" }, h("p", {},
+    "Nog geen huistaken " + info.naam.toLowerCase() + ". Elke " + (hw.vak === "taal" ? "maandag" : "donderdag") + " komt er automatisch een kolom bij (in weken met een weekagenda)."),
+    h("button", { class: "knop secundair", onclick: () => openExtraHuistaak() }, "＋ Extra huistaak"));
+
+  const kop = h("tr", {}, h("th", { class: "n", scope: "col" }, "Leerling"),
+    kols.map(k => h("th", { scope: "col", class: k.weggevallen ? "weggevallen" : "" },
+      h("button", { class: "linkknop kolomkop", onclick: () => openHuistaak(k), title: "Huistaak aanpassen" },
+        h("span", { class: "kolomdatum" }, datumKort(k.datum)), h("span", { class: "kolomtitel" }, (k.extra ? "➕ " : "") + H.kolomTitel(k) + (k.weggevallen ? " (valt weg)" : ""))))),
+    h("th", { scope: "col", class: "hw-som" }, "Te laat / open"));
+  const rijen = ll.map(l => {
+    const tel = H.telling(kols.filter(k => !k.weggevallen), l.id);
+    return h("tr", {},
+      h("th", { class: "n", scope: "row" }, l.naam),
+      kols.map(k => {
+        if (k.weggevallen) return h("td", { class: "hw-cel weg" }, "–");
+        const t = H.toestand(k, l.id);
+        const sleutel = k.id + "§" + l.id;
+        return h("td", { class: "hw-cel" }, h("button", { class: "hw-knop", "data-sleutel": sleutel,
+          "aria-label": l.naam + ", " + H.kolomTitel(k) + " " + datumKort(k.datum) + ": " + H.TOESTANDEN[t].naam.toLowerCase() + ". Klik om te wijzigen.",
+          title: H.TOESTANDEN[t].naam,
+          onclick: () => { hw.focus = sleutel; D.wijzig(g2 => H.zetToestand(g2, k, l.id, H.volgendeToestand(t))); } }, hwBol(t)));
+      }),
+      h("td", { class: "hw-som" },
+        tel.laat ? h("span", { class: "hw-tel laat" }, hwBol("laat"), tel.laat) : null,
+        tel.open ? h("span", { class: "hw-tel open" }, hwBol("open"), tel.open) : null,
+        !tel.laat && !tel.open ? h("span", { class: "hw-tel in" }, hwBol("in"), "alles") : null));
+  });
+  const voet = h("tr", {}, h("th", { class: "n", scope: "row" }, "Ingediend"),
+    kols.map(k => {
+      if (k.weggevallen) return h("td", { class: "hw-cel weg" }, "");
+      const n = ll.filter(l => H.toestand(k, l.id) !== "open").length;
+      return h("td", { class: "hw-totaal" + (n === ll.length ? " vol" : "") }, n + "/" + ll.length);
+    }), h("td", {}));
+  const vak = h("div", { class: "tabelvak hw-vak" }, h("table", { class: "hw-tabel" },
+    h("caption", { class: "sr-only" }, "Huiswerk " + info.naam.toLowerCase()),
+    h("thead", {}, kop), h("tbody", {}, rijen), h("tfoot", {}, voet)));
+  vak.addEventListener("scroll", () => { hw.scroll = vak.scrollLeft; });
+  requestAnimationFrame(() => {
+    vak.scrollLeft = hw.scroll == null ? vak.scrollWidth : hw.scroll;
+    if (hw.focus) { const k = vak.querySelector('[data-sleutel="' + CSS.escape(hw.focus) + '"]'); if (k) k.focus({ preventScroll: true }); hw.focus = null; }
+  });
+  const weg = huiswerkKolommen(hw.vak, { metWeggevallen: true }).filter(k => k.weggevallen).length;
+  return [vak, h("div", { class: "knoppen hw-opties" },
+    alle.length > ZICHTBAAR ? h("button", { class: "knop klein secundair", onclick: () => { hw.alles = !hw.alles; hw.scroll = null; toon(); } },
+      hw.alles ? "Enkel de laatste " + ZICHTBAAR : "Alle " + alle.length + " huistaken tonen") : null,
+    weg || hw.weggevallen ? h("button", { class: "knop klein secundair", onclick: () => { hw.weggevallen = !hw.weggevallen; toon(); } },
+      hw.weggevallen ? "Weggevallen huistaken verbergen" : "Weggevallen huistaken tonen (" + weg + ")") : null),
+    h("p", { class: "klein" }, "Klik op een kolomtitel om de huistaak een naam te geven, de datum te verschuiven, iedereen op ingediend te zetten of de huistaak te laten wegvallen.")];
+}
+
+function openHuistaak(k) {
+  const titel = h("input", { type: "text", value: k.titel || "", placeholder: H.kolomTitel({ ...k, titel: "" }) });
+  const datum = h("input", { type: "date", value: k.datum });
+  const sluit = () => venster.sluit();
+  const bewaar = () => {
+    const velden = {};
+    if ((k.titel || "") !== titel.value.trim()) velden.titel = titel.value.trim();
+    if (datum.value && datum.value !== k.datum) velden.datum = datum.value;
+    if (Object.keys(velden).length) D.wijzig(g => H.pasAan(g, k, velden));
+  };
+  const ll = H.leerlingenVan(D.data(), k.vak, [k]);
+  const venster = sluitbaarVenster([
+    h("h2", {}, H.kolomTitel(k)),
+    h("div", { class: "veld" }, h("label", {}, "Naam (bv. werkblad lezen p. 12)"), titel),
+    h("div", { class: "veld" }, h("label", {}, "Datum"), datum),
+    h("div", { class: "knoppen kolom" },
+      k.weggevallen ? null : h("button", { class: "knop secundair", onclick: () => { bewaar(); D.wijzig(g => H.iedereenIngediend(g, k, ll.map(l => l.id))); sluit(); } }, "✓ Iedereen die nog rood staat: ingediend"),
+      k.extra
+        ? h("button", { class: "knop secundair gevaar", onclick: () => { if (confirm("Deze extra huistaak verwijderen?")) { D.wijzig(g => H.verwijderExtra(g, k)); sluit(); } } }, "Extra huistaak verwijderen")
+        : h("button", { class: "knop secundair", onclick: () => { bewaar(); D.wijzig(g => H.pasAan(g, k, { weggevallen: !k.weggevallen })); sluit(); } },
+          k.weggevallen ? "Toch gegeven: terugzetten" : "Valt weg deze week")),
+    h("div", { class: "knoppen" }, h("button", { class: "knop secundair", onclick: sluit }, "Annuleren"), h("button", { class: "knop", onclick: () => { bewaar(); sluit(); } }, "Bewaren"))
+  ], { klein: true });
+  setTimeout(() => titel.focus(), 0);
+}
+
+function openExtraHuistaak() {
+  const vak = h("select", {}, Object.entries(H.HW_VAKKEN).map(([k, v]) => h("option", { value: k, selected: k === hw.vak || null }, v.naam)));
+  const titel = h("input", { type: "text", placeholder: "bv. spreekbeurt voorbereiden" });
+  const datum = h("input", { type: "date", value: W.isoDatum(nu()) });
+  const venster = sluitbaarVenster([
+    h("h2", {}, "Extra huistaak"),
+    h("div", { class: "veld" }, h("label", {}, "Vak"), vak),
+    h("div", { class: "veld" }, h("label", {}, "Naam"), titel),
+    h("div", { class: "veld" }, h("label", {}, "Datum"), datum),
+    h("div", { class: "knoppen" }, h("button", { class: "knop secundair", onclick: () => venster.sluit() }, "Annuleren"),
+      h("button", { class: "knop", onclick: () => {
+        if (!datum.value) return;
+        const nieuw = H.nieuweExtra(vak.value, datum.value, titel.value);
+        if (datum.value < huiswerkVanaf()) { staat.inst.huiswerkVanaf = datum.value; bewaarInstellingen(); }
+        D.wijzig(g => { g.huiswerk = g.huiswerk || []; g.huiswerk.push(nieuw); });
+        hw.vak = vak.value; hw.scroll = null; venster.sluit(); toon();
+      } }, "Toevoegen"))
+  ], { klein: true });
+  setTimeout(() => titel.focus(), 0);
+}
+
 // ---------- Bewerken ----------
 const VAKKEN = ["T", "W", "WO", "GO", "SOVA", "PROJ", "Func. T", "Func. W", "Schrift", "Voorlezen", "CREA", "LO"];
 
@@ -1733,7 +1885,7 @@ function kopbalk() {
     h("div", { class: "merk" }, "☕ Coffee!"),
     staat.testtijd ? h("button", { class: "testtijd", title: "Klik om terug te keren naar de echte tijd", onclick: () => { staat.testtijd = null; toon(); } },
       "Testtijd " + datumTekst(nu(), { weekday: "short", day: "numeric", month: "short" }) + " " + W.tijdTekst(W.minutenVan(nu())) + " ✕") : null,
-    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"), todoTab(knop), knop("evaluatie", "Evaluatie"),
+    h("nav", {}, knop("nu", "Nu"), knop("week", "Week"), todoTab(knop), knop("huiswerk", "Huiswerk"), knop("evaluatie", "Evaluatie"),
       h("button", { class: "tab thema-knop", title: THEMA_INFO[staat.inst.thema || "auto"][1] + " (klik om te wisselen)",
         "aria-label": THEMA_INFO[staat.inst.thema || "auto"][1], onclick: volgendThema }, THEMA_INFO[staat.inst.thema || "auto"][0]),
       knop("instellingen", "⚙︎"))
@@ -1752,6 +1904,7 @@ async function toon() {
     if (staat.weergave === "week") await toonWeek(inhoud);
     else if (staat.weergave === "todo") await toonTodo(inhoud);
     else if (staat.weergave === "evaluatie") toonEvaluatie(inhoud);
+    else if (staat.weergave === "huiswerk") toonHuiswerk(inhoud);
     else await toonNu(inhoud);
   } catch (e) {
     if (mijnBeurt !== bezigMetTonen) return;

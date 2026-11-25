@@ -8,8 +8,8 @@
 import * as W from "./weken.js";
 
 // Alle lijsten in het gegevensbestand; elk item heeft een id en een tijdstip 'gewijzigd'
-export const VERZAMELINGEN = ["todos", "leerlingen", "toetsen", "notities", "huiswerk", "themas"];
-export const LEEG = () => ({ versie: 1, todos: [], leerlingen: [], toetsen: [], notities: [], huiswerk: [], themas: [] });
+export const VERZAMELINGEN = ["todos", "leerlingen", "toetsen", "notities", "huiswerk", "themas", "instellingen"];
+export const LEEG = () => ({ versie: 1, todos: [], leerlingen: [], toetsen: [], notities: [], huiswerk: [], themas: [], instellingen: [] });
 
 function nieuwId() {
   return (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));

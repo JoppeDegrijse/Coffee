@@ -877,3 +877,11 @@ main.met-zoekknop .lessen-zoekbalk:not(.open) + .lessen-zoekvak + .weekdeel .wee
 .slot.landing { background: color-mix(in srgb, var(--karamel) 18%, var(--oppervlak)); }
 .nu-links > .landing { order: 2; }
 .kaart.landing h4 { margin: 0 0 6px; }
+button.rij.compact.landing-rij { background: color-mix(in srgb, var(--karamel) 14%, var(--oppervlak)); border-color: color-mix(in srgb, var(--karamel) 45%, var(--lijn)); }
+.landing-label { background: transparent; padding: 0 2px; }
+.landing-wie { color: var(--tekst-zacht); font-weight: 400; }
+button.rij.compact.landing-rij .levend { margin-left: auto; align-self: center; }
+.landing-namen { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 8px 0 10px; }
+.landing-namen label { display: flex; flex-direction: column; gap: 4px; font-weight: 700; font-size: .85rem; }
+.landing-namen input { margin: 0; }
+@media (max-width: 560px) { .landing-namen { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

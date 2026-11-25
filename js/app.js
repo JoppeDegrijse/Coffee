@@ -466,11 +466,11 @@ async function toonNu(doel) {
   }
 
   const eersteLes = dag.rijen.find(r => r.soort === "les" && r.start != null);
-  const landing = weekdagVan(n) < 5 ? T.landingVan(dag, n) : null;
+  const landing = landingVoorDag(dag, n);
   if (landing && nuMin < landing.eind) {
     const bezig = nuMin >= landing.start;
     links.appendChild(h("div", { class: "kaart landing" },
-      h("h4", {}, "🌅 Zachte landing " + (bezig ? "· nog " + (landing.eind - nuMin) + " min" : W.tijdTekst(landing.start) + "–" + W.tijdTekst(landing.eind))),
+      h("h4", {}, "🌅 Zachte landing " + (bezig ? "· nog " + (landing.eind - nuMin) + " min" : W.tijdTekst(landing.start) + "–" + W.tijdTekst(landing.eind)) + (landing.wie ? " · " + landing.wie : "")),
       todoBlok(landing)));
   }
   if (eersteLes && nuMin < eersteLes.start) { const ak = afdrukKaart(dag, n); if (ak) links.appendChild(ak); }
@@ -540,6 +540,15 @@ function dagTijdlijn(dag, datum, nuMin) {
   const lijst = h("ol", { class: "tijdlijn" });
   let streepGezet = false;
   const streep = () => h("li", { class: "nu-streep", "aria-label": "Nu, " + W.tijdTekst(nuMin) }, h("span", {}, W.tijdTekst(nuMin)));
+  const l = landingVoorDag(dag, datum);
+  if (l && !dag.rijen.some(r => /zachte\s*landing/i.test((r.titel || "") + " " + (r.onderwerp || "")))) {
+    const bezig = nuMin >= l.start && nuMin < l.eind, voorbij = nuMin >= l.eind;
+    if (nuMin < l.start) { lijst.appendChild(streep()); streepGezet = true; }
+    const knop = landingKnop(l);
+    knop.classList.toggle("voorbij", voorbij); knop.classList.toggle("bezig", bezig);
+    lijst.appendChild(h("li", { class: "tijdlijn-item" + (bezig ? " bezig" : "") + (voorbij ? " voorbij" : "") }, knop));
+    if (bezig) streepGezet = true;
+  }
   for (const rij of dag.rijen) {
     if (rij.start == null) continue;
     const bezig = nuMin >= rij.start && nuMin < rij.eind;
@@ -633,7 +642,10 @@ async function toonWeek(doel) {
     const vandaag = W.middernacht(n).getTime() === datum.getTime();
     raster.appendChild(h("section", { class: "weekdag" + (vandaag ? " vandaag" : ""), "aria-current": vandaag ? "date" : null },
       h("h3", {}, dag.titel.charAt(0) + dag.titel.slice(1).toLowerCase(), vandaag ? h("span", { class: "vandaag-label" }, "Vandaag") : null),
-      dagLijst(dag, datum, vandaag ? W.minutenVan(n) : null, { compact: true })));
+      (() => { const lijst = dagLijst(dag, datum, vandaag ? W.minutenVan(n) : null, { compact: true });
+        const l = landingVoorDag(dag, datum);
+        if (l && !dag.rijen.some(r => /zachte\s*landing/i.test((r.titel || "") + " " + (r.onderwerp || "")))) lijst.prepend(landingKnop(l));
+        return lijst; })()));
   }
   weekdeel.appendChild(raster);
 }
@@ -783,6 +795,16 @@ function toonInstellingen(doel) {
       h("p", { class: "klein" }, "Kies een dag in een week waarin je meegaat zwemmen. Coffee! wisselt vanaf dan elke week af tussen zwemmen en permanentie."),
       zwemVeld,
       h("button", { class: "knop", onclick: () => { inst.zwemweek = zwemVeld.value || null; bewaarInstellingen(); zeg("ok", "Zwemritme opgeslagen."); } }, "Opslaan")
+    ),
+    h("section", { class: "kaart" },
+      h("h3", {}, "Zachte landing"),
+      h("p", { class: "klein" }, "Wie doet de zachte landing (8.00–8.40 u.)? Typ \u201cik\u201d voor jezelf. Dit staat in je weekoverzicht; inplannen kan elke schooldag, wie het ook doet. Bewaard in je gegevensbestand op Drive."),
+      (() => {
+        const namen = landingNamen();
+        const velden = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag"].map((d, i) => h("input", { type: "text", value: namen[i] || "", placeholder: "naam of ik", "aria-label": "Zachte landing " + d }));
+        return [h("div", { class: "landing-namen" }, ["Ma", "Di", "Wo", "Do", "Vr"].map((d, i) => h("label", {}, d, velden[i]))),
+          h("button", { class: "knop", onclick: () => { zetLandingNamen(velden.map(v => v.value.trim())); zeg("ok", "Zachte landing opgeslagen."); } }, "Opslaan")];
+      })()
     ),
     h("section", { class: "kaart" },
       h("h3", {}, "Avondblok"),
@@ -1093,6 +1115,53 @@ function lesNotities(rij, datum, { invoer = false } = {}) {
     veld.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); veld.blur(); } });
     return [vorige ? notitieBlok(vorige) : null, h("label", { class: "notitie-invoer" }, h("span", {}, "📝"), veld)];
   });
+}
+
+// ---------- Wie doet de zachte landing? ----------
+// Bewaard in je gegevensbestand op Drive (niet in de code): { id: "landing", namen: [ma, di, wo, do, vr] }; "ik" = jij.
+const LANDING_STANDAARD = ["ik", "ik", "ik", "", ""];
+function landingNamen() {
+  const x = (D.data().instellingen || []).find(i => i.id === "landing" && !i.verwijderd);
+  return x && Array.isArray(x.namen) ? x.namen : LANDING_STANDAARD;
+}
+const eigenVoornaam = () => ((staat.gebruiker && staat.gebruiker.displayName) || "").split(" ")[0] || "jij";
+function landingWie(weekdag) {
+  const n = (landingNamen()[weekdag] || "").trim();
+  return !n ? "" : /^ik$/i.test(n) ? eigenVoornaam() : n;
+}
+function zetLandingNamen(namen) {
+  D.wijzig(g => {
+    g.instellingen = g.instellingen || [];
+    const x = g.instellingen.find(i => i.id === "landing");
+    if (x) { x.namen = namen; x.gewijzigd = Date.now(); delete x.verwijderd; }
+    else g.instellingen.push({ id: "landing", namen, gewijzigd: Date.now() });
+  });
+}
+// Zachte landing van een dag (null als er die dag geen les is)
+function landingVoorDag(dag, datum) {
+  const wd = weekdagVan(datum);
+  if (wd > 4 || !dag || !dag.rijen.some(r => r.start != null)) return null;
+  return { ...T.landingVan(dag, datum), wie: landingWie(wd) };
+}
+function openLanding(l) {
+  const dagNaam = datumTekst(W.vanIso(l.datum), { weekday: "long", day: "numeric", month: "long" });
+  const venster = sluitbaarVenster([
+    h("h2", {}, "🌅 Zachte landing"),
+    h("p", { class: "klein" }, dagNaam.charAt(0).toUpperCase() + dagNaam.slice(1) + ", " + W.tijdTekst(l.start) + "–" + W.tijdTekst(l.eind) + (l.wie ? " · " + l.wie : " · nog niet ingevuld wie (Instellingen → Zachte landing)")),
+    todoBlok(l),
+    h("div", { class: "knoppen" }, h("button", { class: "knop", onclick: () => sluit() }, "Sluiten"))
+  ], { klein: true });
+  const sluit = () => { venster.sluit(); document.removeEventListener("keydown", opEsc); };
+  const opEsc = (e) => { if (e.key === "Escape" && document.querySelectorAll(".venster").length === 1) sluit(); };
+  document.addEventListener("keydown", opEsc);
+  venster.element.addEventListener("click", (e) => { if (e.target === venster.element) sluit(); });
+}
+function landingKnop(l) {
+  return h("button", { type: "button", class: "rij compact landing-rij", onclick: () => openLanding(l), title: "To-do's voor de zachte landing" },
+    h("span", { class: "tijd" }, W.tijdTekst(l.start)),
+    h("span", { class: "vak landing-label" }, "🌅"),
+    h("span", { class: "titel" }, "Zachte landing", h("span", { class: "landing-wie" }, l.wie ? " · " + l.wie : " · wie?")),
+    levendVak(() => { const n = T.inBlok(todos(), l.datum, l.start, l.soort).filter(t => !t.klaar).length; return n ? h("span", { class: "tab-teller", title: n + " to-do's" }, String(n)) : null; }));
 }
 
 // ---------- Afdruklijst voor de zachte landing ----------

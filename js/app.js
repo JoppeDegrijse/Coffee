@@ -526,25 +526,103 @@ async function toonWeek(doel) {
   }
   const week = staat.weken[staat.weekIndex];
   const n = nu();
+  const huidigeWeek = W.weekVoorDatum(staat.weken, n);
+  const zoekbalk = lessenZoekbalk();
   const navigatie = h("div", { class: "weeknav" },
     h("button", { class: "knop secundair", disabled: staat.weekIndex === 0, onclick: () => { staat.weekIndex--; toon(); } }, "←"),
     h("div", {}, h("h2", {}, "Week van " + datumTekst(week.maandag, { day: "numeric", month: "long" })),
       h("a", { class: "klein", href: week.bestand.webViewLink || "#", target: "_blank", rel: "noopener" }, week.bestand.name + " ↗")),
     h("button", { class: "knop secundair", disabled: staat.weekIndex === staat.weken.length - 1, onclick: () => { staat.weekIndex++; toon(); } }, "→")
   );
-  doel.replaceChildren(navigatie, nieuweWeekKnop(), h("p", { class: "laden" }, "Week wordt geladen…"));
+  const naarNu = huidigeWeek && huidigeWeek !== week
+    ? h("div", { class: "naar-vandaag" }, h("button", { class: "knop klein secundair", onclick: () => { staat.weekIndex = staat.weken.indexOf(huidigeWeek); toon(); } }, "↩ Naar deze week")) : null;
+  const weekdeel = h("div", { class: "weekdeel" }, navigatie, naarNu, nieuweWeekKnop(), h("p", { class: "laden" }, "Week wordt geladen…"));
+  doel.replaceChildren(zoekbalk.element, zoekbalk.resultaten, weekdeel);
+  zoekbalk.opZoeken = (actief) => { weekdeel.hidden = actief; };
+  zoekbalk.start();
   const dagen = await dagenVan(week);
   await koppelIdem(week);
-  doel.querySelector(".laden").remove();
+  weekdeel.querySelector(".laden").remove();
   const raster = h("div", { class: "weekraster" });
   for (const dag of dagen) {
     const datum = W.plusDagen(week.maandag, Math.max(0, dag.weekdag));
     const vandaag = W.middernacht(n).getTime() === datum.getTime();
-    raster.appendChild(h("section", { class: "weekdag" + (vandaag ? " vandaag" : "") },
-      h("h3", {}, dag.titel.charAt(0) + dag.titel.slice(1).toLowerCase()),
+    raster.appendChild(h("section", { class: "weekdag" + (vandaag ? " vandaag" : ""), "aria-current": vandaag ? "date" : null },
+      h("h3", {}, dag.titel.charAt(0) + dag.titel.slice(1).toLowerCase(), vandaag ? h("span", { class: "vandaag-label" }, "Vandaag") : null),
       dagLijst(dag, datum, vandaag ? W.minutenVan(n) : null, { compact: true })));
   }
-  doel.appendChild(raster);
+  weekdeel.appendChild(raster);
+}
+
+// ---------- Zoeken in alle lesvoorbereidingen van dit schooljaar ----------
+const lz = { zoek: "", toon: 30, aantalWeken: 0 };
+
+// Alle weken laden (4 tegelijk, enkel wat nog niet in het geheugen zit), met voortgang
+async function alleLessen(voortgang) {
+  const weken = staat.weken.slice();
+  const nodig = weken.filter(w => !staat.cache.has(w.bestand.id));
+  if (nodig.length) {
+    let klaar = weken.length - nodig.length;
+    const rij = nodig.slice();
+    const werker = async () => { while (rij.length) { const w = rij.shift(); try { await dagenVan(w); } catch (e) { console.warn("Week niet geladen", w.bestand.name, e); } klaar++; voortgang && voortgang(klaar, weken.length); } };
+    await Promise.all([werker(), werker(), werker(), werker()]);
+  }
+  const lessen = await lessenUit(weken);
+  for (const l of lessen) if (l.rij.idem && !l.rij.idemVan) { const v = W.vorigeLes(lessen, l); if (v) l.rij.idemVan = v; }
+  lz.aantalWeken = weken.length;
+  return lessen;
+}
+
+function zoekTekstLes(rij) {
+  const t = weergaveRij(rij);
+  return [rij.vak, vakVoluit(rij.vak), t.onderwerp, ...(t.doelen || []), ...(t.regels || []).map(r => r.tekst), ...(t.materiaal || [])].join(" \n ");
+}
+
+function lessenZoekbalk() {
+  const veld = h("input", { type: "search", class: "lessen-zoek", value: lz.zoek, placeholder: "Zoek in al je lesvoorbereidingen van dit schooljaar, bv. breuken, kern 7, Pater Damiaan…",
+    "aria-label": "Zoek in alle lesvoorbereidingen" });
+  const status = h("p", { class: "klein lessen-status", role: "status" });
+  const lijst = h("div", { class: "lessen-resultaten" });
+  const resultaten = h("section", { class: "lessen-zoekvak", hidden: true }, status, lijst);
+  const zb = { element: h("div", { class: "lessen-zoekbalk" }, veld), resultaten, opZoeken: () => {}, start: () => { if (lz.zoek) zoek(); } };
+  let timer, teller = 0;
+  const zoek = async () => {
+    lz.zoek = veld.value;
+    const termen = L.zoektermen(lz.zoek);
+    const actief = termen.length > 0;
+    resultaten.hidden = !actief; zb.opZoeken(actief);
+    if (!actief) { lijst.replaceChildren(); status.textContent = ""; return; }
+    const mijn = ++teller;
+    if (staat.weken.some(w => !staat.cache.has(w.bestand.id))) status.textContent = "Weken laden…";
+    const lessen = await alleLessen((k, n) => { if (mijn === teller) status.textContent = "Weken laden… " + k + "/" + n; });
+    if (mijn !== teller) return;
+    const treffers = lessen.filter(l => !(l.rij.idem && !l.rij.idemVan)).filter(l => {
+      const tekst = L.normaal(zoekTekstLes(l.rij));
+      return termen.every(w => L.bevat(tekst, w));
+    }).reverse();
+    status.textContent = treffers.length ? treffers.length + (treffers.length === 1 ? " les gevonden" : " lessen gevonden") + " in " + lz.aantalWeken + " weken" : "Niets gevonden in " + lz.aantalWeken + " weken.";
+    lijst.replaceChildren(...treffers.slice(0, lz.toon).map(l => zoekResultaat(l, termen)),
+      treffers.length > lz.toon ? h("button", { class: "knop secundair", onclick: () => { lz.toon += 30; zoek(); } }, "Meer tonen (" + (treffers.length - lz.toon) + ")") : "");
+  };
+  veld.addEventListener("input", () => { clearTimeout(timer); lz.toon = 30; timer = setTimeout(zoek, 200); });
+  veld.addEventListener("keydown", (e) => { if (e.key === "Escape" && veld.value) { e.preventDefault(); veld.value = ""; zoek(); } });
+  if (lz.zoek) setTimeout(() => veld.focus(), 0);
+  return zb;
+}
+
+function zoekResultaat(l, termen) {
+  const t = weergaveRij(l.rij);
+  const n = nu();
+  // de eerste regels waarin een zoekwoord voorkomt (behalve het onderwerp zelf)
+  const regels = [...new Set([...(t.doelen || []), ...(t.regels || []).map(r => r.tekst), ...(t.materiaal || [])])]
+    .filter(x => x && x !== t.onderwerp && termen.some(w => L.bevat(L.normaal(x), w))).slice(0, 2);
+  const dag = datumTekst(l.datum, { weekday: "short", day: "numeric", month: "short" });
+  const toekomst = l.datum > W.middernacht(n);
+  return h("button", { class: "lesresultaat", onclick: () => openLesVenster(l.rij, l.datum) },
+    h("span", { class: "lesresultaat-wanneer" }, h("span", { class: "lesresultaat-dag" }, dag), h("span", { class: "tijd" }, W.tijdTekst(l.rij.start)), toekomst ? h("span", { class: "klein" }, "gepland") : null),
+    h("span", { class: "lesresultaat-inhoud" },
+      h("span", { class: "lesresultaat-kop" }, vakLabel(l.rij.vak), h("span", { class: "lesresultaat-titel" }, ...markeer(t.onderwerp || "Nog in te vullen", termen), l.rij.idem ? " (idem)" : "")),
+      regels.map(r => h("span", { class: "lesresultaat-regel" }, ...markeer(r.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"), termen)))));
 }
 
 // ---------- Weergave: Instellingen ----------

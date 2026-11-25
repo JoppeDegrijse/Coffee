@@ -732,3 +732,23 @@ mark { background: color-mix(in srgb, var(--karamel) 38%, transparent); color: i
   .doelbody { padding-left: 12px; }
   details.suggesties { margin-left: 0; }
 }
+
+/* ---------- Weekoverzicht: vandaag + zoeken in alle lessen ---------- */
+.weekdag.vandaag { background: color-mix(in srgb, var(--karamel) 16%, var(--oppervlak)); outline: 2px solid var(--karamel); border-radius: var(--r-groot); padding: 10px; margin: -10px; }
+.weekdag.vandaag h3::after { content: none; }
+.vandaag-label { display: inline-block; margin-left: 8px; padding: 2px 9px; border-radius: 999px; background: var(--karamel); color: #241a15; font-size: .78rem; font-weight: 800; vertical-align: middle; }
+main.weergave-week .weekraster { gap: 22px 18px; }
+.naar-vandaag { display: flex; justify-content: center; margin: -6px 0 10px; }
+.lessen-zoekbalk { margin: 0 0 14px; }
+.lessen-zoek { width: 100%; font-size: 1.02rem; padding: 11px 14px; margin: 0; border-radius: var(--r-groot); }
+.lessen-zoekvak { margin-bottom: 18px; }
+.lessen-resultaten { display: grid; gap: 8px; }
+.lesresultaat { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 14px; text-align: left; font: inherit; color: inherit; background: var(--oppervlak); border: 1px solid var(--lijn); border-radius: var(--r); padding: 10px 14px; cursor: pointer; }
+.lesresultaat:hover { border-color: var(--karamel); }
+.lesresultaat-wanneer { display: flex; flex-direction: column; gap: 2px; }
+.lesresultaat-dag { font-family: var(--titel); font-weight: 800; }
+.lesresultaat-inhoud { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lesresultaat-kop { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lesresultaat-titel { font-weight: 700; }
+.lesresultaat-regel { font-size: .9rem; color: var(--tekst-zacht); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 560px) { .lesresultaat { grid-template-columns: 1fr; } .lesresultaat-wanneer { flex-direction: row; gap: 8px; } }

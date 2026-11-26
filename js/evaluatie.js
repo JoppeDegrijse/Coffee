@@ -19,7 +19,15 @@ export function nieuweLeerling(naam, groepen = ["klas"]) {
   return { id: nieuwId(), naam: naam.trim(), groepen: [...groepen], gewijzigd: Date.now() };
 }
 
-export function nieuweToets({ titel, vak, datum, groep, onderdelen }) {
+// Woordleestoets: zoveel mogelijk woorden lezen in één minuut; per leerling "goed" en "fout"
+export const isWoordlezen = (t) => !!(t && t.soort === "woordlezen");
+export const WOORD_ONDERDELEN = [{ id: "goed", naam: "Goed", max: 0 }, { id: "fout", naam: "Fout", max: 0 }];
+
+export function nieuweToets({ titel, vak, datum, groep, onderdelen, soort }) {
+  if (soort === "woordlezen") {
+    return { id: nieuwId(), soort: "woordlezen", titel: titel.trim(), vak, datum, groep: groep || VAKKEN[vak].groep,
+      onderdelen: WOORD_ONDERDELEN.map(o => ({ ...o })), scores: {}, gewijzigd: Date.now() };
+  }
   return {
     id: nieuwId(), titel: titel.trim(), vak, datum, groep: groep || VAKKEN[vak].groep,
     onderdelen: (onderdelen && onderdelen.length ? onderdelen : [{ naam: "Totaal", max: 20 }])
@@ -56,6 +64,7 @@ export function toonScore(w) {
 // Resultaat van één leerling: { totaal, max, procent, status }
 // status: "volledig" | "onvolledig" | "afw" | "vrij" | "leeg"
 export function resultaat(toets, leerlingId) {
+  if (isWoordlezen(toets)) { const w = woordResultaat(toets, leerlingId); return { totaal: w.goed, max: null, procent: null, status: w.status }; }
   const s = toets.scores[leerlingId] || {};
   let totaal = 0, max = 0, ingevuld = 0, afw = 0, vrij = 0;
   for (const o of toets.onderdelen) {
@@ -89,11 +98,69 @@ export function statistiek(g, toets) {
   };
 }
 
+// ---------- Woordleestoets ----------
+export function woordResultaat(toets, leerlingId) {
+  const s = toets.scores[leerlingId] || {};
+  const g = s.goed, f = s.fout;
+  if (g === "afw" || f === "afw") return { goed: null, fout: null, gelezen: null, nauwkeurig: null, status: "afw" };
+  if (g === "vrij" || f === "vrij") return { goed: null, fout: null, gelezen: null, nauwkeurig: null, status: "vrij" };
+  if (typeof g !== "number") return { goed: null, fout: typeof f === "number" ? f : null, gelezen: null, nauwkeurig: null, status: typeof f === "number" ? "onvolledig" : "leeg" };
+  const fout = typeof f === "number" ? f : 0;
+  const gelezen = g + fout;
+  return { goed: g, fout: typeof f === "number" ? f : null, gelezen, nauwkeurig: gelezen ? Math.round(g / gelezen * 100) : null,
+    status: typeof f === "number" ? "volledig" : "onvolledig" };
+}
+const gem = (xs) => xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length * 10) / 10 : null;
+// Gemiddelde van de groep (wie afwezig of vrijgesteld is, telt niet mee)
+export function woordStatistiek(g, toets) {
+  const ll = leerlingenVanToets(g, toets);
+  const res = ll.map(l => woordResultaat(toets, l.id));
+  const metGoed = res.filter(r => r.goed != null);
+  return {
+    aantal: ll.length,
+    ingevuld: res.filter(r => r.status !== "leeg").length,
+    goed: gem(metGoed.map(r => r.goed)),
+    fout: gem(metGoed.filter(r => r.fout != null).map(r => r.fout)),
+    gelezen: gem(metGoed.map(r => r.gelezen)),
+    nauwkeurig: gem(metGoed.filter(r => r.nauwkeurig != null).map(r => r.nauwkeurig)),
+    hoogste: metGoed.length ? Math.max(...metGoed.map(r => r.gelezen)) : null
+  };
+}
+// Vergelijking met het klasgemiddelde (aantal woorden goed): boven / rond / onder / ver onder
+export const VERGELIJK = {
+  sterk: { naam: "Boven het gemiddelde", icoon: "▲", uitleg: "15 % of meer boven" },
+  goed: { naam: "Rond het gemiddelde", icoon: "●", uitleg: "tot 15 % erboven of eronder" },
+  aandacht: { naam: "Onder het gemiddelde", icoon: "▼", uitleg: "15 tot 30 % eronder" },
+  zorg: { naam: "Ver onder het gemiddelde", icoon: "!", uitleg: "meer dan 30 % eronder" }
+};
+export function vergelijk(goed, gemiddelde) {
+  if (goed == null || gemiddelde == null || gemiddelde <= 0) return null;
+  const verhouding = goed / gemiddelde;
+  const niveau = verhouding >= 1.15 ? "sterk" : verhouding >= 0.85 ? "goed" : verhouding >= 0.70 ? "aandacht" : "zorg";
+  return { verschil: Math.round((goed - gemiddelde) * 10) / 10, procent: Math.round(verhouding * 100), niveau };
+}
+// Alle woordleestoetsen (oudste eerst) met per leerling het resultaat en de vergelijking met de klas
+export function woordOverzicht(g, vak = null) {
+  const ts = toetsen(g).filter(t => isWoordlezen(t) && (!vak || t.vak === vak)).reverse();
+  const stats = ts.map(t => woordStatistiek(g, t));
+  const ll = leerlingen(g).filter(l => ts.some(t => l.groepen.includes(t.groep) || (t.scores[l.id] && Object.keys(t.scores[l.id]).length)));
+  const rijen = ll.map(l => {
+    const cellen = ts.map((t, i) => {
+      const inToets = l.groepen.includes(t.groep) || (t.scores[l.id] && Object.keys(t.scores[l.id]).length);
+      if (!inToets) return null;
+      const r = woordResultaat(t, l.id);
+      return { ...r, vergelijking: vergelijk(r.goed, stats[i].goed) };
+    });
+    return { leerling: l, cellen, trend: trend(cellen.map(c => c && c.goed)) };
+  });
+  return { toetsen: ts, stats, rijen };
+}
+
 // Per vak de toetsen van één leerling (oudste eerst)
 export function overzichtLeerling(g, leerlingId) {
   const uit = {};
   for (const vak of Object.keys(VAKKEN)) {
-    const rijen = toetsen(g).filter(t => t.vak === vak && (t.scores[leerlingId] && Object.keys(t.scores[leerlingId]).length))
+    const rijen = toetsen(g).filter(t => t.vak === vak && !isWoordlezen(t) && (t.scores[leerlingId] && Object.keys(t.scores[leerlingId]).length))
       .map(t => ({ toets: t, res: resultaat(t, leerlingId) })).reverse();
     const pr = rijen.map(r => r.res.procent).filter(p => p != null);
     uit[vak] = { rijen, gemiddelde: pr.length ? Math.round(pr.reduce((a, b) => a + b, 0) / pr.length) : null };
@@ -103,6 +170,19 @@ export function overzichtLeerling(g, leerlingId) {
 
 // Tabel om te plakken in Sheets/Docs/Excel (tab-gescheiden)
 export function alsTabel(g, toets) {
+  if (isWoordlezen(toets)) {
+    const st = woordStatistiek(g, toets);
+    const rijen = leerlingenVanToets(g, toets).map(l => {
+      const r = woordResultaat(toets, l.id);
+      const v = vergelijk(r.goed, st.goed);
+      if (r.status === "afw" || r.status === "vrij") return [l.naam, r.status, "", "", "", ""];
+      return [l.naam, toonScore(r.goed), toonScore(r.fout), toonScore(r.gelezen), r.nauwkeurig == null ? "" : r.nauwkeurig + "%",
+        v ? (v.verschil > 0 ? "+" : "") + toonScore(v.verschil) + " (" + VERGELIJK[v.niveau].naam.toLowerCase() + ")" : ""];
+    });
+    const kop = ["Leerling", "Goed", "Fout", "Gelezen", "Juist", "T.o.v. klasgemiddelde"];
+    const voet = ["Klasgemiddelde", toonScore(st.goed), toonScore(st.fout), toonScore(st.gelezen), st.nauwkeurig == null ? "" : st.nauwkeurig + "%", ""];
+    return [kop, ...rijen, voet].map(r => r.join("\t")).join("\n");
+  }
   const kop = ["Leerling", ...toets.onderdelen.map(o => o.naam + " (/" + toonScore(o.max) + ")"), "Totaal (/" + toonScore(maxVan(toets)) + ")", "%"];
   const rijen = leerlingenVanToets(g, toets).map(l => {
     const s = toets.scores[l.id] || {};
@@ -140,7 +220,7 @@ export function trend(procenten) {
 
 // Klasoverzicht van één vak: leerlingen × toetsen (oudste toets links)
 export function klasoverzicht(g, vak) {
-  const ts = toetsen(g).filter(t => t.vak === vak).reverse();
+  const ts = toetsen(g).filter(t => t.vak === vak && !isWoordlezen(t)).reverse();
   const groep = VAKKEN[vak].groep;
   const ll = leerlingen(g).filter(l => l.groepen.includes(groep) || ts.some(t => t.scores[l.id] && Object.keys(t.scores[l.id]).length));
   const rijen = ll.map(l => {

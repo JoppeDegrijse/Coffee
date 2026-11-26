@@ -1338,6 +1338,15 @@ function toonEvaluatie(doel) {
       return [
         h("h3", { class: "sectie" }, "Toetsen"), filter, legende(),
         zichtbaar.length ? h("div", { class: "toetslijst" }, zichtbaar.map(t => {
+          if (E.isWoordlezen(t)) {
+            const ws = E.woordStatistiek(D.data(), t);
+            return h("button", { class: "toetsrij", onclick: () => gaNaar("toets", t.id) },
+              h("span", { class: "tijd" }, datumKort(t.datum)),
+              h("span", { class: "vak" }, E.VAKKEN[t.vak].naam),
+              h("span", { class: "toetsnaam" }, "📖 " + t.titel),
+              h("span", { class: "klein" }, ws.ingevuld + "/" + ws.aantal + " ingevuld"),
+              h("span", { class: "klein woordgem" }, ws.goed == null ? "–" : "gem. " + E.toonScore(ws.goed) + " goed/min"));
+          }
           const st = E.statistiek(D.data(), t);
           return h("button", { class: "toetsrij", onclick: () => gaNaar("toets", t.id) },
             h("span", { class: "tijd" }, datumKort(t.datum)),
@@ -1408,6 +1417,9 @@ function toonLeerlingenBeheer(doel) {
 
 // ----- Toets aanmaken / aanpassen -----
 function openToetsVenster(bestaand = null) {
+  const soort = h("select", { disabled: bestaand ? true : null, "aria-label": "Soort toets" },
+    h("option", { value: "punten", selected: !E.isWoordlezen(bestaand) || null }, "Gewone toets (punten)"),
+    h("option", { value: "woordlezen", selected: E.isWoordlezen(bestaand) || null }, "Woordleestoets (woorden in 1 minuut)"));
   const titel = h("input", { type: "text", value: bestaand ? bestaand.titel : "", placeholder: "bv. Toets breuken, dictee kern 7" });
   const vak = h("select", {}, Object.entries(E.VAKKEN).map(([k, v]) => h("option", { value: k, selected: (bestaand ? bestaand.vak : "taal") === k || null }, v.naam)));
   const datum = h("input", { type: "date", value: bestaand ? bestaand.datum : W.isoDatum(nu()) });
@@ -1426,28 +1438,42 @@ function openToetsVenster(bestaand = null) {
   };
   (bestaand ? bestaand.onderdelen : [{ naam: "Totaal", max: 20 }]).forEach(voegOnderdeelToe);
   const melding = h("div", { class: "melding" });
+  const woordUitleg = h("p", { class: "klein woord-uitleg" }, "Per leerling vul je het aantal woorden goed en fout in (na 1 minuut lezen). Coffee! berekent het aantal gelezen woorden, het percentage juist en vergelijkt elke leerling met het gemiddelde van de groep.");
+  const onderdelenVeld = h("div", { class: "veld" }, h("label", {}, "Onderdelen en maximum"),
+    h("p", { class: "klein" }, "Eén onderdeel volstaat voor een gewone totaalscore."),
+    onderdelen,
+    h("button", { type: "button", class: "knop klein secundair", onclick: () => voegOnderdeelToe() }, "＋ Onderdeel"));
+  const pasSoortToe = () => {
+    const w = soort.value === "woordlezen";
+    onderdelenVeld.hidden = w; woordUitleg.hidden = !w;
+    titel.placeholder = w ? "bv. Woordleestoets november, DMT kaart 1" : "bv. Toets breuken, dictee kern 7";
+  };
+  soort.addEventListener("change", pasSoortToe);
   const venster = sluitbaarVenster([
     h("h3", {}, bestaand ? "Toets aanpassen" : "Nieuwe toets"),
     melding,
     h("div", { class: "formulier" },
+      h("div", { class: "veld" }, h("label", {}, "Soort"), soort),
+      woordUitleg,
       h("div", { class: "veld" }, h("label", {}, "Titel"), titel),
       h("div", { class: "rij-velden" },
         h("div", { class: "veld" }, h("label", {}, "Vak"), vak),
         h("div", { class: "veld" }, h("label", {}, "Datum"), datum),
         h("div", { class: "veld" }, h("label", {}, "Groep"), groep)),
-      h("div", { class: "veld" }, h("label", {}, "Onderdelen en maximum"),
-        h("p", { class: "klein" }, "Eén onderdeel volstaat voor een gewone totaalscore."),
-        onderdelen,
-        h("button", { type: "button", class: "knop klein secundair", onclick: () => voegOnderdeelToe() }, "＋ Onderdeel"))),
+      onderdelenVeld),
     h("div", { class: "knoppen" },
       h("button", { class: "knop", onclick: () => {
         const ond = [...onderdelen.children].map(r => {
           const [n, m] = r.querySelectorAll("input");
           return { id: r.dataset.id || undefined, naam: n.value, max: E.leesScore(m.value) };
         });
+        const woord = soort.value === "woordlezen";
         if (!titel.value.trim()) { melding.className = "melding fout"; melding.textContent = "Geef de toets een titel."; return; }
-        if (ond.some(o => typeof o.max !== "number" || o.max <= 0)) { melding.className = "melding fout"; melding.textContent = "Geef elk onderdeel een maximum (bv. 10)."; return; }
-        if (bestaand) {
+        if (!woord && ond.some(o => typeof o.max !== "number" || o.max <= 0)) { melding.className = "melding fout"; melding.textContent = "Geef elk onderdeel een maximum (bv. 10)."; return; }
+        if (bestaand && woord) {
+          D.wijzig(g => { const t = g.toetsen.find(x => x.id === bestaand.id); Object.assign(t, { titel: titel.value.trim(), vak: vak.value, datum: datum.value, groep: groep.value, gewijzigd: Date.now() }); });
+          venster.sluit(); toon();
+        } else if (bestaand) {
           D.wijzig(g => {
             const t = g.toetsen.find(x => x.id === bestaand.id);
             const nieuw = E.nieuweToets({ titel: titel.value, vak: vak.value, datum: datum.value, groep: groep.value, onderdelen: ond });
@@ -1455,18 +1481,141 @@ function openToetsVenster(bestaand = null) {
           });
           venster.sluit(); toon();
         } else {
-          const t = E.nieuweToets({ titel: titel.value, vak: vak.value, datum: datum.value || W.isoDatum(nu()), groep: groep.value, onderdelen: ond });
+          const t = E.nieuweToets({ titel: titel.value, vak: vak.value, datum: datum.value || W.isoDatum(nu()), groep: groep.value, onderdelen: ond, soort: woord ? "woordlezen" : undefined });
           D.wijzig(g => lijst(g, "toetsen").push(t));
           venster.sluit(); gaNaar("toets", t.id);
         }
       } }, bestaand ? "Opslaan" : "Toets aanmaken"),
       h("button", { class: "knop secundair", onclick: () => venster.sluit() }, "Annuleren"))
   ], { klein: true });
-  setTimeout(() => titel.focus(), 0);
+  pasSoortToe();
+  setTimeout(() => (bestaand ? titel : soort).focus(), 0);
+}
+
+// ----- Woordleestoets: goed / fout invullen, vergelijken met het klasgemiddelde -----
+function vergelijkLabel(v, gemGoed) {
+  if (!v) return h("span", { class: "klein" }, "–");
+  const info = E.VERGELIJK[v.niveau];
+  const teken = v.verschil > 0 ? "+" : "";
+  return h("span", { class: "niveau niv-" + v.niveau, title: info.naam + ": " + teken + E.toonScore(v.verschil) + " woorden t.o.v. het klasgemiddelde (" + E.toonScore(gemGoed) + ")" },
+    h("span", { class: "niv-icoon", "aria-hidden": "true" }, info.icoon), teken + E.toonScore(v.verschil),
+    h("span", { class: "sr-only" }, " woorden, " + info.naam.toLowerCase()));
+}
+// Staafje met het aantal woorden goed en een streepje op het klasgemiddelde
+function woordStaaf(goed, gemGoed, schaal, niveau) {
+  if (goed == null) return h("span", { class: "klein" }, "");
+  const pct = (x) => Math.max(0, Math.min(100, x / (schaal || 1) * 100));
+  return h("span", { class: "woordstaaf", "aria-hidden": "true" },
+    h("span", { class: "niv-vul-" + (niveau || "goed"), style: "width:" + pct(goed) + "%" }),
+    gemGoed != null ? h("span", { class: "gemstreep", style: "left:" + pct(gemGoed) + "%", title: "Klasgemiddelde: " + E.toonScore(gemGoed) }) : null);
+}
+function woordLegende() {
+  return h("div", { class: "legende", "aria-label": "Legende vergelijking met het klasgemiddelde" },
+    Object.entries(E.VERGELIJK).map(([k, v]) => h("span", { class: "niveau niv-" + k, title: v.uitleg }, h("span", { class: "niv-icoon" }, v.icoon), v.naam)),
+    h("span", { class: "klein" }, "| = klasgemiddelde (woorden goed)"));
+}
+
+function toonWoordleestoets(doel, toets) {
+  const g = D.data();
+  const ll = E.leerlingenVanToets(g, toets);
+  const wijzig = (lid, oid, waarde) => D.wijzig(gg => {
+    const t = gg.toetsen.find(x => x.id === toets.id);
+    t.scores[lid] = t.scores[lid] || {};
+    if (waarde == null) delete t.scores[lid][oid]; else t.scores[lid][oid] = waarde;
+    if (waarde === "afw" || waarde === "vrij") { t.scores[lid].goed = waarde; t.scores[lid].fout = waarde; }
+    else if (t.scores[lid][oid === "goed" ? "fout" : "goed"] === "afw" || t.scores[lid][oid === "goed" ? "fout" : "goed"] === "vrij") delete t.scores[lid][oid === "goed" ? "fout" : "goed"];
+    t.gewijzigd = Date.now();
+  });
+  const cel = {};          // per leerling: gelezen, juist, vergelijking, staaf
+  const voet = { goed: h("td", { class: "gem" }), fout: h("td", { class: "gem" }), gelezen: h("td", { class: "gem" }), juist: h("td", { class: "gem" }), verg: h("td", { class: "gem" }) };
+  const samenvatting = h("div", { class: "woord-samenvatting", role: "status" });
+  const invoer = [];
+  const herbereken = () => {
+    const t = D.data().toetsen.find(x => x.id === toets.id);
+    const st = E.woordStatistiek(D.data(), t);
+    const schaal = Math.max(st.hoogste || 0, 1) * 1.05;
+    for (const l of ll) {
+      const r = E.woordResultaat(t, l.id);
+      const v = E.vergelijk(r.goed, st.goed);
+      const c = cel[l.id];
+      c.gelezen.textContent = r.gelezen != null ? E.toonScore(r.gelezen) : (r.status === "afw" || r.status === "vrij" ? r.status : "");
+      c.juist.textContent = r.nauwkeurig != null ? r.nauwkeurig + "%" : "";
+      c.verg.replaceChildren(r.goed != null ? h("span", { class: "woordverg" }, woordStaaf(r.goed, st.goed, schaal, v && v.niveau), vergelijkLabel(v, st.goed)) : "");
+    }
+    voet.goed.textContent = E.toonScore(st.goed); voet.fout.textContent = E.toonScore(st.fout);
+    voet.gelezen.textContent = E.toonScore(st.gelezen); voet.juist.textContent = st.nauwkeurig != null ? Math.round(st.nauwkeurig) + "%" : "";
+    samenvatting.replaceChildren(...(st.goed == null ? [h("span", { class: "klein" }, "Nog geen resultaten.")] : [
+      h("span", { class: "woord-kerngetal" }, h("strong", {}, E.toonScore(st.goed)), " woorden goed per minuut"),
+      h("span", {}, "gemiddeld in de " + E.GROEPEN[toets.groep].toLowerCase()),
+      h("span", { class: "klein" }, E.toonScore(st.fout) + " fout · " + (st.nauwkeurig != null ? Math.round(st.nauwkeurig) + "% juist · " : "") + st.ingevuld + "/" + st.aantal + " ingevuld")]));
+  };
+  const rijen = ll.map((l, ri) => {
+    const s = toets.scores[l.id] || {};
+    invoer[ri] = [];
+    const velden = ["goed", "fout"].map((oid, ci) => {
+      const veld = h("input", { type: "text", inputmode: "numeric", class: "score", value: E.toonScore(s[oid]), "aria-label": l.naam + ", woorden " + oid, autocomplete: "off" });
+      invoer[ri][ci] = veld;
+      const bewaar = () => {
+        const w = E.leesScore(veld.value);
+        const fout = w === undefined || (typeof w === "number" && (w < 0 || w > 400 || !Number.isInteger(w)));
+        veld.classList.toggle("fout", fout);
+        veld.title = fout ? "Typ een geheel getal, a (afwezig) of v (vrijgesteld)" : "";
+        if (fout) return;
+        const nu_ = (D.data().toetsen.find(x => x.id === toets.id).scores[l.id] || {})[oid];
+        if (w !== nu_) {
+          wijzig(l.id, oid, w);
+          if (w === "afw" || w === "vrij") invoer[ri].forEach(v => { v.value = w; v.classList.remove("fout"); });
+          herbereken();
+        }
+      };
+      veld.addEventListener("change", bewaar);
+      veld.addEventListener("blur", bewaar);
+      veld.addEventListener("focus", () => veld.select());
+      veld.addEventListener("keydown", (e) => {
+        const ga = (r, c) => { const v = invoer[r] && invoer[r][c]; if (v) { e.preventDefault(); bewaar(); v.focus(); } };
+        // Enter: van "goed" naar "fout" bij dezelfde leerling, van "fout" naar "goed" bij de volgende
+        if (e.key === "Enter") { const st_ = E.leesScore(veld.value); if (ci === 0 && st_ !== "afw" && st_ !== "vrij") ga(ri, 1); else ga(ri + 1, 0); }
+        else if (e.key === "ArrowDown") ga(ri + 1, ci);
+        else if (e.key === "ArrowUp") ga(ri - 1, ci);
+        else if (e.key === "ArrowRight" && veld.selectionStart === veld.value.length) ga(ri, ci + 1);
+        else if (e.key === "ArrowLeft" && veld.selectionStart === 0) ga(ri, ci - 1);
+      });
+      return h("td", {}, veld);
+    });
+    cel[l.id] = { gelezen: h("td", { class: "totaal" }), juist: h("td", { class: "pct" }), verg: h("td", { class: "verg" }) };
+    return h("tr", {}, h("th", { scope: "row" }, h("button", { class: "linkknop", onclick: () => gaNaar("leerling", l.id) }, l.naam)),
+      velden, cel[l.id].gelezen, cel[l.id].juist, cel[l.id].verg);
+  });
+  const tabel = h("table", { class: "puntentabel woordtabel" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Leerling"), h("th", {}, "Goed"), h("th", {}, "Fout"), h("th", {}, "Gelezen"), h("th", {}, "Juist"), h("th", {}, "T.o.v. klasgemiddelde"))),
+    h("tbody", {}, rijen),
+    h("tfoot", {}, h("tr", {}, h("th", { scope: "row" }, "Klasgemiddelde"), voet.goed, voet.fout, voet.gelezen, voet.juist, voet.verg)));
+  let wisZeker = false;
+  doel.replaceChildren(
+    terugKnop(),
+    h("div", { class: "nu-kop" },
+      h("div", {}, h("h2", {}, toets.titel), h("div", { class: "klein" }, "Woordleestoets · " + E.VAKKEN[toets.vak].naam + ", " + datumKort(toets.datum) + ", " + E.GROEPEN[toets.groep].toLowerCase())),
+      h("div", { class: "knoppen" },
+        h("button", { class: "knop secundair", onclick: async () => {
+          try { await navigator.clipboard.writeText(E.alsTabel(D.data(), D.data().toetsen.find(x => x.id === toets.id))); toast("Gekopieerd", "Plak in Google Sheets, Docs of Excel"); }
+          catch (e) { toast("Kopiëren lukte niet"); }
+        } }, "📋 Kopiëren"),
+        h("button", { class: "knop secundair", onclick: () => openToetsVenster(toets) }, "✏️ Aanpassen"))),
+    ...(ll.length ? [samenvatting, woordLegende(), h("div", { class: "tabelvak" }, tabel)]
+      : [h("p", {}, "Er zitten nog geen leerlingen in de " + E.GROEPEN[toets.groep].toLowerCase() + ". ", h("button", { class: "linkknop", onclick: () => gaNaar("leerlingen") }, "Leerlingen beheren"))]),
+    h("p", { class: "klein" }, "Typ het aantal woorden goed, Enter, het aantal fout, Enter: dan ga je naar de volgende leerling. a = afwezig, v = vrijgesteld (tellen niet mee in het gemiddelde). Alles wordt meteen bewaard."),
+    h("button", { class: "knop klein secundair gevaar", onclick: (e) => {
+      if (!wisZeker) { wisZeker = true; e.currentTarget.textContent = "Zeker? Klik nog eens om de toets te verwijderen"; return; }
+      D.wijzig(gg => { const t = gg.toetsen.find(x => x.id === toets.id); t.verwijderd = true; t.gewijzigd = Date.now(); });
+      gaNaar("lijst");
+    } }, "Toets verwijderen"));
+  herbereken();
+  setTimeout(() => { const eerste = invoer.find(r => r && r.some(v => !v.value)); const v = eerste ? eerste.find(x => !x.value) : null; if (v && matchMedia("(pointer: fine)").matches) v.focus(); }, 0);
 }
 
 // ----- Punten invoeren -----
 function toonToets(doel, toets) {
+  if (E.isWoordlezen(toets)) return toonWoordleestoets(doel, toets);
   const g = D.data();
   const ll = E.leerlingenVanToets(g, toets);
   const max = E.maxVan(toets);
@@ -1579,12 +1728,43 @@ function toonKlasoverzicht(doel, vak) {
     ko.toetsen.length && ko.rijen.length
       ? h("div", { class: "tabelvak" }, h("table", { class: "klastabel" }, h("thead", {}, kop), h("tbody", {}, rijen)))
       : h("p", { class: "klein" }, "Nog geen toetsen of leerlingen voor " + info.naam.toLowerCase() + "."),
-    h("p", { class: "klein" }, "Pijltje = trend: het laatste resultaat tegenover de vorige toetsen (↗ beter, ↘ minder, → gelijk). Klik op een toets of leerling voor details."));
+    h("p", { class: "klein" }, "Pijltje = trend: het laatste resultaat tegenover de vorige toetsen (↗ beter, ↘ minder, → gelijk). Klik op een toets of leerling voor details."),
+    woordKlasoverzicht(vak));
+}
+
+function woordKlasoverzicht(vak) {
+  const wo = E.woordOverzicht(D.data(), vak);
+  if (!wo.toetsen.length) return null;
+  const kop = h("tr", {}, h("th", { class: "n" }, "Leerling"),
+    wo.toetsen.map(t => h("th", { title: t.titel + " (" + datumKort(t.datum) + ")" },
+      h("button", { class: "linkknop kolomkop", onclick: () => gaNaar("toets", t.id) }, h("span", { class: "kolomdatum" }, datumKort(t.datum)), h("span", { class: "kolomtitel" }, t.titel)))),
+    h("th", {}, "Trend"));
+  const rijen = wo.rijen.map(r => h("tr", {},
+    h("th", { class: "n", scope: "row" }, h("button", { class: "linkknop", onclick: () => gaNaar("leerling", r.leerling.id) }, r.leerling.naam)),
+    r.cellen.map((c, i) => {
+      const t = wo.toetsen[i];
+      if (!c) return h("td", { class: "cel niet" }, "");
+      if (c.status === "leeg") return h("td", { class: "cel open" }, h("button", { class: "celknop", onclick: () => gaNaar("toets", t.id), "aria-label": "Invullen voor " + t.titel }, "+"));
+      if (c.goed == null) return h("td", { class: "cel niv-geen" }, c.status === "afw" ? "afw" : c.status === "vrij" ? "vrij" : "…");
+      const v = c.vergelijking;
+      return h("td", { class: "cel niv-" + (v ? v.niveau : "goed"), title: r.leerling.naam + ": " + c.goed + " goed, " + (c.fout ?? "?") + " fout; klas " + E.toonScore(wo.stats[i].goed) + (v ? " (" + E.VERGELIJK[v.niveau].naam.toLowerCase() + ")" : "") },
+        h("span", { class: "niv-icoon", "aria-hidden": "true" }, v ? E.VERGELIJK[v.niveau].icoon : ""), String(c.goed));
+    }),
+    h("td", { class: "gem-cel" }, trendTeken(r.trend) || h("span", { class: "klein" }, "–"))));
+  const voet = h("tr", {}, h("th", { class: "n", scope: "row" }, "Klasgemiddelde"),
+    wo.stats.map(st => h("td", { class: "gem" }, st.goed == null ? "" : E.toonScore(st.goed))), h("td", {}));
+  return h("section", { class: "woordoverzicht" },
+    h("h3", { class: "sectie" }, "📖 Woordlezen (woorden goed per minuut)"),
+    woordLegende(),
+    h("div", { class: "tabelvak" }, h("table", { class: "klastabel" }, h("thead", {}, kop), h("tbody", {}, rijen), h("tfoot", {}, voet))),
+    h("p", { class: "klein" }, "De kleur vergelijkt elke leerling met het gemiddelde van de groep op die toets. De trend vergelijkt het laatste aantal woorden goed met de vorige keren (5 woorden of meer verschil)."));
 }
 
 // ----- Overzicht per leerling -----
 function toonLeerling(doel, l) {
   const ov = E.overzichtLeerling(D.data(), l.id);
+  const woordRijen = (vak) => E.toetsen(D.data()).filter(t => E.isWoordlezen(t) && t.vak === vak && t.scores[l.id] && Object.keys(t.scores[l.id]).length).reverse()
+    .map(t => ({ t, r: E.woordResultaat(t, l.id), st: E.woordStatistiek(D.data(), t) }));
   const blokken = Object.entries(E.VAKKEN).map(([vak, info]) => {
     const o = ov[vak];
     return h("section", { class: "kaart" },
@@ -1598,7 +1778,16 @@ function toonLeerling(doel, l) {
           h("td", {}, h("button", { class: "linkknop", onclick: () => gaNaar("toets", toets.id) }, toets.titel)),
           h("td", {}, res.totaal != null ? E.toonScore(res.totaal) + "/" + E.toonScore(res.max) : ""),
           h("td", {}, res.procent != null ? procentStaaf(res.procent, toets.titel + ": " + res.procent + "%") : h("span", { class: "niveau niv-geen" }, procentTekst(res)))))))
-        : h("p", { class: "klein" }, "Nog geen toetsen."));
+        : h("p", { class: "klein" }, o.rijen.length || woordRijen(vak).length ? "" : "Nog geen toetsen."),
+      woordRijen(vak).length ? h("div", { class: "woordleerling" },
+        h("h4", {}, "📖 Woordlezen", trendTeken(E.trend(woordRijen(vak).map(x => x.r.goed)))),
+        h("table", { class: "overzichttabel" },
+          h("thead", {}, h("tr", {}, h("th", {}, "Datum"), h("th", {}, "Toets"), h("th", {}, "Goed / fout"), h("th", {}, "T.o.v. klas"))),
+          h("tbody", {}, woordRijen(vak).map(({ t, r, st }) => h("tr", {},
+            h("td", { class: "tijd" }, datumKort(t.datum)),
+            h("td", {}, h("button", { class: "linkknop", onclick: () => gaNaar("toets", t.id) }, t.titel)),
+            h("td", {}, r.goed != null ? r.goed + " goed · " + (r.fout ?? "?") + " fout" + (r.nauwkeurig != null ? " (" + r.nauwkeurig + "%)" : "") : h("span", { class: "niveau niv-geen" }, r.status)),
+            h("td", {}, r.goed != null ? h("span", { class: "woordverg" }, vergelijkLabel(E.vergelijk(r.goed, st.goed), st.goed), h("span", { class: "klein" }, " klas " + E.toonScore(st.goed))) : "")))))) : null);
   });
   doel.replaceChildren(
     terugKnop(),

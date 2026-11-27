@@ -161,10 +161,10 @@ export function vergelijk(goed, st) {
   if (goed == null || !st || st.goed == null) return null;
   const verschil = Math.round((goed - st.goed) * 10) / 10;
   if (!st.sd || (st.n || 0) < MIN_VOOR_SD) return { verschil, z: null, niveau: null };
-  const zExact = (goed - st.goed) / st.sd;
-  const z = Math.round(zExact * 100) / 100;
+  // afgerond op één decimaal, zodat het getoonde z-getal en de kleur altijd overeenkomen
+  const z = Math.round((goed - st.goed) / st.sd * 10) / 10;
   const g = zGrenzen;
-  const niveau = zExact >= g.boven ? "sterk" : zExact > g.onder ? "goed" : zExact > g.verOnder ? "aandacht" : "zorg";
+  const niveau = z >= g.boven ? "sterk" : z > g.onder ? "goed" : z > g.verOnder ? "aandacht" : "zorg";
   return { verschil, z, niveau };
 }
 export const toonZ = (z) => { if (z == null) return ""; const t = Math.abs(z).toFixed(1); return (t === "0.0" ? "" : z > 0 ? "+" : "−") + t.replace(".", ","); };

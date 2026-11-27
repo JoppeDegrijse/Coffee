@@ -899,3 +899,6 @@ button.rij.compact.landing-rij .levend { margin-left: auto; align-self: center; 
 .woordleerling { margin-top: 10px; }
 .woordleerling h4 { margin: 8px 0 4px; display: flex; align-items: center; gap: 8px; }
 .woordoverzicht { margin-top: 18px; }
+.z-score { margin-left: 6px; font-weight: 400; opacity: .8; font-size: .9em; }
+.woordtabel tfoot td.gem:last-child { font-size: .85rem; white-space: nowrap; }
+.klein.sd { opacity: .75; }

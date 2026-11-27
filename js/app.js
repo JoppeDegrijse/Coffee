@@ -1493,12 +1493,16 @@ function openToetsVenster(bestaand = null) {
 }
 
 // ----- Woordleestoets: goed / fout invullen, vergelijken met het klasgemiddelde -----
-function vergelijkLabel(v, gemGoed) {
+function vergelijkLabel(v, st) {
   if (!v) return h("span", { class: "klein" }, "–");
-  const info = E.VERGELIJK[v.niveau];
   const teken = v.verschil > 0 ? "+" : "";
-  return h("span", { class: "niveau niv-" + v.niveau, title: info.naam + ": " + teken + E.toonScore(v.verschil) + " woorden t.o.v. het klasgemiddelde (" + E.toonScore(gemGoed) + ")" },
+  if (!v.niveau) return h("span", { class: "niveau niv-geen", title: "Te weinig scores om de spreiding te berekenen (minstens " + E.MIN_VOOR_SD + " nodig)" },
+    teken + E.toonScore(v.verschil), h("span", { class: "sr-only" }, " woorden t.o.v. het gemiddelde"));
+  const info = E.VERGELIJK[v.niveau];
+  return h("span", { class: "niveau niv-" + v.niveau,
+    title: info.naam + ": " + teken + E.toonScore(v.verschil) + " woorden t.o.v. het klasgemiddelde (" + E.toonScore(st.goed) + "), z = " + E.toonZ(v.z) + " (SD " + E.toonScore(st.sd) + ")" },
     h("span", { class: "niv-icoon", "aria-hidden": "true" }, info.icoon), teken + E.toonScore(v.verschil),
+    h("span", { class: "z-score" }, "z " + E.toonZ(v.z)),
     h("span", { class: "sr-only" }, " woorden, " + info.naam.toLowerCase()));
 }
 // Staafje met het aantal woorden goed en een streepje op het klasgemiddelde
@@ -1512,7 +1516,7 @@ function woordStaaf(goed, gemGoed, schaal, niveau) {
 function woordLegende() {
   return h("div", { class: "legende", "aria-label": "Legende vergelijking met het klasgemiddelde" },
     Object.entries(E.VERGELIJK).map(([k, v]) => h("span", { class: "niveau niv-" + k, title: v.uitleg }, h("span", { class: "niv-icoon" }, v.icoon), v.naam)),
-    h("span", { class: "klein" }, "| = klasgemiddelde (woorden goed)"));
+    h("span", { class: "klein" }, "| = klasgemiddelde · z = afstand tot het gemiddelde in standaardafwijkingen (SD) van deze toets"));
 }
 
 function toonWoordleestoets(doel, toets) {
@@ -1536,18 +1540,20 @@ function toonWoordleestoets(doel, toets) {
     const schaal = Math.max(st.hoogste || 0, 1) * 1.05;
     for (const l of ll) {
       const r = E.woordResultaat(t, l.id);
-      const v = E.vergelijk(r.goed, st.goed);
+      const v = E.vergelijk(r.goed, st);
       const c = cel[l.id];
       c.gelezen.textContent = r.gelezen != null ? E.toonScore(r.gelezen) : (r.status === "afw" || r.status === "vrij" ? r.status : "");
       c.juist.textContent = r.nauwkeurig != null ? r.nauwkeurig + "%" : "";
-      c.verg.replaceChildren(r.goed != null ? h("span", { class: "woordverg" }, woordStaaf(r.goed, st.goed, schaal, v && v.niveau), vergelijkLabel(v, st.goed)) : "");
+      c.verg.replaceChildren(r.goed != null ? h("span", { class: "woordverg" }, woordStaaf(r.goed, st.goed, schaal, v && v.niveau), vergelijkLabel(v, st)) : "");
     }
     voet.goed.textContent = E.toonScore(st.goed); voet.fout.textContent = E.toonScore(st.fout);
+    voet.verg.textContent = st.sd != null ? "SD " + E.toonScore(st.sd) + " · variantie " + E.toonScore(st.variantie) : "";
     voet.gelezen.textContent = E.toonScore(st.gelezen); voet.juist.textContent = st.nauwkeurig != null ? Math.round(st.nauwkeurig) + "%" : "";
     samenvatting.replaceChildren(...(st.goed == null ? [h("span", { class: "klein" }, "Nog geen resultaten.")] : [
       h("span", { class: "woord-kerngetal" }, h("strong", {}, E.toonScore(st.goed)), " woorden goed per minuut"),
       h("span", {}, "gemiddeld in de " + E.GROEPEN[toets.groep].toLowerCase()),
-      h("span", { class: "klein" }, E.toonScore(st.fout) + " fout · " + (st.nauwkeurig != null ? Math.round(st.nauwkeurig) + "% juist · " : "") + st.ingevuld + "/" + st.aantal + " ingevuld")]));
+      h("span", { class: "klein" }, (st.sd != null ? "spreiding ± " + E.toonScore(st.sd) + " (SD) · " : "") + E.toonScore(st.fout) + " fout · " + (st.nauwkeurig != null ? Math.round(st.nauwkeurig) + "% juist · " : "") + st.ingevuld + "/" + st.aantal + " ingevuld"),
+      st.n < E.MIN_VOOR_SD ? h("span", { class: "klein" }, "Vanaf " + E.MIN_VOOR_SD + " scores kleurt Coffee! elke leerling volgens de standaardafwijking.") : null].filter(Boolean)));
   };
   const rijen = ll.map((l, ri) => {
     const s = toets.scores[l.id] || {};
@@ -1747,17 +1753,19 @@ function woordKlasoverzicht(vak) {
       if (c.status === "leeg") return h("td", { class: "cel open" }, h("button", { class: "celknop", onclick: () => gaNaar("toets", t.id), "aria-label": "Invullen voor " + t.titel }, "+"));
       if (c.goed == null) return h("td", { class: "cel niv-geen" }, c.status === "afw" ? "afw" : c.status === "vrij" ? "vrij" : "…");
       const v = c.vergelijking;
-      return h("td", { class: "cel niv-" + (v ? v.niveau : "goed"), title: r.leerling.naam + ": " + c.goed + " goed, " + (c.fout ?? "?") + " fout; klas " + E.toonScore(wo.stats[i].goed) + (v ? " (" + E.VERGELIJK[v.niveau].naam.toLowerCase() + ")" : "") },
-        h("span", { class: "niv-icoon", "aria-hidden": "true" }, v ? E.VERGELIJK[v.niveau].icoon : ""), String(c.goed));
+      const n = v && v.niveau;
+      return h("td", { class: "cel niv-" + (n || "geen"), title: r.leerling.naam + ": " + c.goed + " goed, " + (c.fout ?? "?") + " fout; klas " + E.toonScore(wo.stats[i].goed) +
+        (n ? ", z = " + E.toonZ(v.z) + " (" + E.VERGELIJK[n].naam.toLowerCase() + ")" : "") },
+        h("span", { class: "niv-icoon", "aria-hidden": "true" }, n ? E.VERGELIJK[n].icoon : ""), String(c.goed));
     }),
     h("td", { class: "gem-cel" }, trendTeken(r.trend) || h("span", { class: "klein" }, "–"))));
   const voet = h("tr", {}, h("th", { class: "n", scope: "row" }, "Klasgemiddelde"),
-    wo.stats.map(st => h("td", { class: "gem" }, st.goed == null ? "" : E.toonScore(st.goed))), h("td", {}));
+    wo.stats.map(st => h("td", { class: "gem" }, st.goed == null ? "" : E.toonScore(st.goed), st.sd != null ? h("span", { class: "klein sd" }, " ±" + E.toonScore(st.sd)) : null)), h("td", {}));
   return h("section", { class: "woordoverzicht" },
     h("h3", { class: "sectie" }, "📖 Woordlezen (woorden goed per minuut)"),
     woordLegende(),
     h("div", { class: "tabelvak" }, h("table", { class: "klastabel" }, h("thead", {}, kop), h("tbody", {}, rijen), h("tfoot", {}, voet))),
-    h("p", { class: "klein" }, "De kleur vergelijkt elke leerling met het gemiddelde van de groep op die toets. De trend vergelijkt het laatste aantal woorden goed met de vorige keren (5 woorden of meer verschil)."));
+    h("p", { class: "klein" }, "De kleur vergelijkt elke leerling met het gemiddelde van de groep op die toets, in standaardafwijkingen (± = SD van die toets). De trend vergelijkt het laatste aantal woorden goed met de vorige keren (5 woorden of meer verschil)."));
 }
 
 // ----- Overzicht per leerling -----
@@ -1787,7 +1795,7 @@ function toonLeerling(doel, l) {
             h("td", { class: "tijd" }, datumKort(t.datum)),
             h("td", {}, h("button", { class: "linkknop", onclick: () => gaNaar("toets", t.id) }, t.titel)),
             h("td", {}, r.goed != null ? r.goed + " goed · " + (r.fout ?? "?") + " fout" + (r.nauwkeurig != null ? " (" + r.nauwkeurig + "%)" : "") : h("span", { class: "niveau niv-geen" }, r.status)),
-            h("td", {}, r.goed != null ? h("span", { class: "woordverg" }, vergelijkLabel(E.vergelijk(r.goed, st.goed), st.goed), h("span", { class: "klein" }, " klas " + E.toonScore(st.goed))) : "")))))) : null);
+            h("td", {}, r.goed != null ? h("span", { class: "woordverg" }, vergelijkLabel(E.vergelijk(r.goed, st), st), h("span", { class: "klein" }, " klas " + E.toonScore(st.goed) + (st.sd != null ? " ± " + E.toonScore(st.sd) : ""))) : "")))))) : null);
   });
   doel.replaceChildren(
     terugKnop(),

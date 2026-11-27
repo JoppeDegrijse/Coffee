@@ -116,7 +116,9 @@ export function woordStatistiek(g, toets) {
   const ll = leerlingenVanToets(g, toets);
   const res = ll.map(l => woordResultaat(toets, l.id));
   const metGoed = res.filter(r => r.goed != null);
+  const sp = spreiding(metGoed.map(r => r.goed));
   return {
+    sd: sp.sd, variantie: sp.variantie, n: metGoed.length,
     aantal: ll.length,
     ingevuld: res.filter(r => r.status !== "leeg").length,
     goed: gem(metGoed.map(r => r.goed)),
@@ -126,19 +128,32 @@ export function woordStatistiek(g, toets) {
     hoogste: metGoed.length ? Math.max(...metGoed.map(r => r.gelezen)) : null
   };
 }
-// Vergelijking met het klasgemiddelde (aantal woorden goed): boven / rond / onder / ver onder
-export const VERGELIJK = {
-  sterk: { naam: "Boven het gemiddelde", icoon: "▲", uitleg: "15 % of meer boven" },
-  goed: { naam: "Rond het gemiddelde", icoon: "●", uitleg: "tot 15 % erboven of eronder" },
-  aandacht: { naam: "Onder het gemiddelde", icoon: "▼", uitleg: "15 tot 30 % eronder" },
-  zorg: { naam: "Ver onder het gemiddelde", icoon: "!", uitleg: "meer dan 30 % eronder" }
-};
-export function vergelijk(goed, gemiddelde) {
-  if (goed == null || gemiddelde == null || gemiddelde <= 0) return null;
-  const verhouding = goed / gemiddelde;
-  const niveau = verhouding >= 1.15 ? "sterk" : verhouding >= 0.85 ? "goed" : verhouding >= 0.70 ? "aandacht" : "zorg";
-  return { verschil: Math.round((goed - gemiddelde) * 10) / 10, procent: Math.round(verhouding * 100), niveau };
+// Spreiding van de scores op één toets: variantie en standaardafwijking (steekproef, n − 1)
+export function spreiding(xs) {
+  const n = xs.length;
+  if (n < 2) return { variantie: null, sd: null };
+  const m = xs.reduce((a, b) => a + b, 0) / n;
+  const variantie = xs.reduce((a, x) => a + (x - m) ** 2, 0) / (n - 1);
+  return { variantie: Math.round(variantie * 10) / 10, sd: Math.round(Math.sqrt(variantie) * 10) / 10 };
 }
+// Vergelijking met het klasgemiddelde, uitgedrukt in standaardafwijkingen (z-score) van deze toets
+export const MIN_VOOR_SD = 3;   // minder leerlingen met een score: geen niveau, enkel het verschil
+export const VERGELIJK = {
+  sterk: { naam: "Boven het gemiddelde", icoon: "▲", uitleg: "1 SD of meer boven het gemiddelde (z ≥ +1)" },
+  goed: { naam: "Rond het gemiddelde", icoon: "●", uitleg: "minder dan 1 SD van het gemiddelde (−1 < z < +1)" },
+  aandacht: { naam: "Onder het gemiddelde", icoon: "▼", uitleg: "1 tot 2 SD onder het gemiddelde (−2 < z ≤ −1)" },
+  zorg: { naam: "Ver onder het gemiddelde", icoon: "!", uitleg: "2 SD of meer onder het gemiddelde (z ≤ −2)" }
+};
+export function vergelijk(goed, st) {
+  if (goed == null || !st || st.goed == null) return null;
+  const verschil = Math.round((goed - st.goed) * 10) / 10;
+  if (!st.sd || (st.n || 0) < MIN_VOOR_SD) return { verschil, z: null, niveau: null };
+  const z = Math.round((goed - st.goed) / st.sd * 100) / 100;
+  const niveau = z >= 1 ? "sterk" : z > -1 ? "goed" : z > -2 ? "aandacht" : "zorg";
+  return { verschil, z, niveau };
+}
+export const toonZ = (z) => { if (z == null) return ""; const t = Math.abs(z).toFixed(1); return (t === "0.0" ? "" : z > 0 ? "+" : "−") + t.replace(".", ","); };
+
 // Alle woordleestoetsen (oudste eerst) met per leerling het resultaat en de vergelijking met de klas
 export function woordOverzicht(g, vak = null) {
   const ts = toetsen(g).filter(t => isWoordlezen(t) && (!vak || t.vak === vak)).reverse();
@@ -149,7 +164,7 @@ export function woordOverzicht(g, vak = null) {
       const inToets = l.groepen.includes(t.groep) || (t.scores[l.id] && Object.keys(t.scores[l.id]).length);
       if (!inToets) return null;
       const r = woordResultaat(t, l.id);
-      return { ...r, vergelijking: vergelijk(r.goed, stats[i].goed) };
+      return { ...r, vergelijking: vergelijk(r.goed, stats[i]) };
     });
     return { leerling: l, cellen, trend: trend(cellen.map(c => c && c.goed)) };
   });
@@ -174,13 +189,13 @@ export function alsTabel(g, toets) {
     const st = woordStatistiek(g, toets);
     const rijen = leerlingenVanToets(g, toets).map(l => {
       const r = woordResultaat(toets, l.id);
-      const v = vergelijk(r.goed, st.goed);
-      if (r.status === "afw" || r.status === "vrij") return [l.naam, r.status, "", "", "", ""];
+      const v = vergelijk(r.goed, st);
+      if (r.status === "afw" || r.status === "vrij") return [l.naam, r.status, "", "", "", "", ""];
       return [l.naam, toonScore(r.goed), toonScore(r.fout), toonScore(r.gelezen), r.nauwkeurig == null ? "" : r.nauwkeurig + "%",
-        v ? (v.verschil > 0 ? "+" : "") + toonScore(v.verschil) + " (" + VERGELIJK[v.niveau].naam.toLowerCase() + ")" : ""];
+        v ? (v.verschil > 0 ? "+" : "") + toonScore(v.verschil) : "", v && v.z != null ? toonZ(v.z) + (v.niveau ? " (" + VERGELIJK[v.niveau].naam.toLowerCase() + ")" : "") : ""];
     });
-    const kop = ["Leerling", "Goed", "Fout", "Gelezen", "Juist", "T.o.v. klasgemiddelde"];
-    const voet = ["Klasgemiddelde", toonScore(st.goed), toonScore(st.fout), toonScore(st.gelezen), st.nauwkeurig == null ? "" : st.nauwkeurig + "%", ""];
+    const kop = ["Leerling", "Goed", "Fout", "Gelezen", "Juist", "Verschil met gemiddelde", "z-score"];
+    const voet = ["Klasgemiddelde", toonScore(st.goed), toonScore(st.fout), toonScore(st.gelezen), st.nauwkeurig == null ? "" : st.nauwkeurig + "%", "SD " + toonScore(st.sd), ""];
     return [kop, ...rijen, voet].map(r => r.join("\t")).join("\n");
   }
   const kop = ["Leerling", ...toets.onderdelen.map(o => o.naam + " (/" + toonScore(o.max) + ")"), "Totaal (/" + toonScore(maxVan(toets)) + ")", "%"];

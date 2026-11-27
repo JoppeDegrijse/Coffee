@@ -138,18 +138,33 @@ export function spreiding(xs) {
 }
 // Vergelijking met het klasgemiddelde, uitgedrukt in standaardafwijkingen (z-score) van deze toets
 export const MIN_VOOR_SD = 3;   // minder leerlingen met een score: geen niveau, enkel het verschil
+// Grenzen in z-scores (instelbaar): boven vanaf +0,5; onder vanaf −0,5; ver onder vanaf −1
+export const STANDAARD_Z = { boven: 0.5, onder: -0.5, verOnder: -1 };
+let zGrenzen = { ...STANDAARD_Z };
+export function zetZGrenzen(gr) { zGrenzen = gr ? { ...STANDAARD_Z, ...gr } : { ...STANDAARD_Z }; vulUitleg(); }
+export const huidigeZGrenzen = () => ({ ...zGrenzen });
+const zt = (z) => (z > 0 ? "+" : z < 0 ? "−" : "") + String(Math.abs(z)).replace(".", ",");
 export const VERGELIJK = {
-  sterk: { naam: "Boven het gemiddelde", icoon: "▲", uitleg: "1 SD of meer boven het gemiddelde (z ≥ +1)" },
-  goed: { naam: "Rond het gemiddelde", icoon: "●", uitleg: "minder dan 1 SD van het gemiddelde (−1 < z < +1)" },
-  aandacht: { naam: "Onder het gemiddelde", icoon: "▼", uitleg: "1 tot 2 SD onder het gemiddelde (−2 < z ≤ −1)" },
-  zorg: { naam: "Ver onder het gemiddelde", icoon: "!", uitleg: "2 SD of meer onder het gemiddelde (z ≤ −2)" }
+  sterk: { naam: "Boven het gemiddelde", icoon: "▲" },
+  goed: { naam: "Rond het gemiddelde", icoon: "●" },
+  aandacht: { naam: "Onder het gemiddelde", icoon: "▼" },
+  zorg: { naam: "Ver onder het gemiddelde", icoon: "!" }
 };
+function vulUitleg() {
+  VERGELIJK.sterk.uitleg = "z ≥ " + zt(zGrenzen.boven);
+  VERGELIJK.goed.uitleg = zt(zGrenzen.onder) + " < z < " + zt(zGrenzen.boven);
+  VERGELIJK.aandacht.uitleg = zt(zGrenzen.verOnder) + " < z ≤ " + zt(zGrenzen.onder);
+  VERGELIJK.zorg.uitleg = "z ≤ " + zt(zGrenzen.verOnder);
+}
+vulUitleg();
 export function vergelijk(goed, st) {
   if (goed == null || !st || st.goed == null) return null;
   const verschil = Math.round((goed - st.goed) * 10) / 10;
   if (!st.sd || (st.n || 0) < MIN_VOOR_SD) return { verschil, z: null, niveau: null };
-  const z = Math.round((goed - st.goed) / st.sd * 100) / 100;
-  const niveau = z >= 1 ? "sterk" : z > -1 ? "goed" : z > -2 ? "aandacht" : "zorg";
+  const zExact = (goed - st.goed) / st.sd;
+  const z = Math.round(zExact * 100) / 100;
+  const g = zGrenzen;
+  const niveau = zExact >= g.boven ? "sterk" : zExact > g.onder ? "goed" : zExact > g.verOnder ? "aandacht" : "zorg";
   return { verschil, z, niveau };
 }
 export const toonZ = (z) => { if (z == null) return ""; const t = Math.abs(z).toFixed(1); return (t === "0.0" ? "" : z > 0 ? "+" : "−") + t.replace(".", ","); };

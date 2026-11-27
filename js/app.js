@@ -834,6 +834,24 @@ function toonInstellingen(doel) {
       })()
     ),
     h("section", { class: "kaart" },
+      h("h3", {}, "Woordleestoets: grenzen"),
+      h("p", { class: "klein" }, "Een leerling wordt vergeleken met het gemiddelde van de toets in standaardafwijkingen (z-score). Hoe dichter bij 0, hoe strenger."),
+      (() => {
+        const gr = E.huidigeZGrenzen();
+        const veld = (w) => h("input", { type: "text", inputmode: "decimal", value: String(w).replace(".", ","), class: "grensveld" });
+        const a = veld(gr.boven), b = veld(gr.onder), c = veld(gr.verOnder);
+        const getal = (x) => Number(String(x.value).replace(",", ".").replace("−", "-"));
+        return h("div", { class: "rij-tijden" },
+          h("label", {}, "▲ Boven vanaf z", a), h("label", {}, "▼ Onder vanaf z", b), h("label", {}, "! Ver onder vanaf z", c),
+          h("button", { class: "knop", onclick: () => {
+            const [x, y, w] = [a, b, c].map(getal);
+            if (![x, y, w].every(Number.isFinite) || !(x > 0 && y < 0 && w < y)) return zeg("fout", "Kies bv. 0,5 / −0,5 / −1: boven positief, onder negatief, ver onder nog lager.");
+            inst.zGrenzen = { boven: x, onder: y, verOnder: w }; bewaarInstellingen(); E.zetZGrenzen(inst.zGrenzen); zeg("ok", "Grenzen opgeslagen.");
+          } }, "Opslaan"),
+          h("button", { class: "knop secundair", onclick: () => { delete inst.zGrenzen; bewaarInstellingen(); E.zetZGrenzen(null); a.value = "0,5"; b.value = "-0,5"; c.value = "-1"; zeg("ok", "Standaardgrenzen hersteld."); } }, "Standaard"));
+      })()
+    ),
+    h("section", { class: "kaart" },
       h("h3", {}, "Huiswerk"),
       h("p", { class: "klein" }, "Elke maandag een kolom voor de huistaak taal, elke donderdag een voor rekenen, in weken met een weekagenda. Vanaf welke datum?"),
       (() => {
@@ -1515,7 +1533,7 @@ function woordStaaf(goed, gemGoed, schaal, niveau) {
 }
 function woordLegende() {
   return h("div", { class: "legende", "aria-label": "Legende vergelijking met het klasgemiddelde" },
-    Object.entries(E.VERGELIJK).map(([k, v]) => h("span", { class: "niveau niv-" + k, title: v.uitleg }, h("span", { class: "niv-icoon" }, v.icoon), v.naam)),
+    Object.entries(E.VERGELIJK).map(([k, v]) => h("span", { class: "niveau niv-" + k, title: v.uitleg }, h("span", { class: "niv-icoon" }, v.icoon), v.naam, h("span", { class: "z-score" }, v.uitleg))),
     h("span", { class: "klein" }, "| = klasgemiddelde · z = afstand tot het gemiddelde in standaardafwijkingen (SD) van deze toets"));
 }
 
@@ -2721,6 +2739,7 @@ async function toon() {
   const app = $("app");
   const inhoud = h("main", { class: "weergave-" + staat.weergave });
   sluitMeer();
+  E.zetZGrenzen(staat.inst.zGrenzen);
   app.replaceChildren(kopbalk(), inhoud, onderbalk());
   try {
     if (staat.weergave === "instellingen") return toonInstellingen(inhoud);
